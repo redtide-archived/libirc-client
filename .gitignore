@@ -1,0 +1,14 @@
+# Doxygen generated files
+docs
+
+# Premake generated files
+build/premake/*/bin
+build/premake/*/obj
+build/codeblocks
+build/codelite
+build/gmake
+build/vs2*
+build/xcode*
+
+# Personal build directories
+_*
