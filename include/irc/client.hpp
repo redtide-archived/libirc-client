@@ -23,6 +23,7 @@
 
 namespace ph = std::placeholders;
 
+/** Main namespace */
 namespace irc {
 
 typedef boost::system::error_code      system_error_code;
@@ -32,21 +33,37 @@ typedef boost::asio::ip::tcp::socket   socket_type;
 typedef boost::asio::streambuf         streambuf_type;
 typedef irc::error_code                error_code;
 
-const int max_params = 15; // RFC 2812
+const int max_params = 15; /**< RFC 2812: maximum parameters allowed */
+/**
+    @class client
 
+    IRC Client class.
+*/
 class client : public std::enable_shared_from_this< client >
              , public boost::asio::coroutine
              , boost::noncopyable
 {
 public:
     typedef std::shared_ptr< client > pointer;
-
+/**
+    Static constructor.
+    @param io_service Reference to the ASIO io_service controller.
+    @return Shared pointer to a new client object.
+*/
     static pointer create( io_service_type &io_service )
     {
-        pointer new_connection( new client( io_service ) );
-        return new_connection;
+        pointer new_client( new client( io_service ) );
+        return new_client;
     }
-
+/**
+    Connects to an irc server via IPV4.
+    @param hostname Server hostname to connect to.
+    @param port     Server port to connect to.
+    @param nickname Nick name for the client connection.
+    @param username User name for the client connection.
+    @param realname Real name for the client connection.
+    @param srv_pwrd Password to login to a server that requires a key.
+*/
     void connect( const std::string &hostname,
                   const std::string &port     = "6667",
                   const std::string &nickname = "nobody",
@@ -66,9 +83,14 @@ public:
                                     std::bind( &client::handle_connect,
                                                 shared_from_this(), ph::_1 ) );
     }
-
+/**
+    Returns the connection state.
+    @return The connection state.
+*/
     bool connected() const { return m_started; }
-
+/**
+    Disconnects from the irc server.
+*/
     void disconnect()
     {
         if(!m_started)
@@ -83,7 +105,10 @@ public:
 
         m_io_service.post([this]() { m_socket.close(); });
     }
-
+/**
+    Sends a raw command to the server.
+    @param command The command string to send.
+*/
     void send_raw( const std::string &command )
     {
         if( !m_started )
@@ -105,7 +130,11 @@ public:
                                            system_error_code(), 0 ) );
         }
     }
-
+/**
+    An user action, the typical /me command.
+    @param destination A channel or nickname target to send the action message.
+    @param message     The action message.
+*/
     void action( const std::string &destination, const std::string &message )
     {
         if( destination.empty() || message.empty() )
@@ -118,7 +147,11 @@ public:
 
         send_raw("PRIVMSG "+ destination +" :\x01"+"ACTION "+ message +"\x01");
     }
-
+/**
+    Sends a CTCP request.
+    @param nickname The target nickname to send the request to.
+    @param request  The CTCP request string.
+*/
     void ctcp_request( const std::string &nickname, const std::string &request )
     {
         if( nickname.empty() || request.empty() )
@@ -130,7 +163,11 @@ public:
         }
         send_raw("PRIVMSG "+ nickname +" :\x01"+ request +"\x01");
     }
-
+/**
+    Sends a CTCP reply.
+    @param nickname The target nickname to send the reply to.
+    @param reply    The CTCP reply string.
+*/
     void ctcp_reply( const std::string &nickname, const std::string &reply )
     {
         if( nickname.empty() || reply.empty() )
@@ -142,7 +179,11 @@ public:
         }
         send_raw("NOTICE "+ nickname +" :\x01"+ reply +"\x01");
     }
-
+/**
+    Sends an invitation to some user to join a channel.
+    @param nickname The user to invite.
+    @param channel  The channel to join for the invited user.
+*/
     void invite( const std::string &nickname, const std::string &channel )
     {
         if( nickname.empty() || channel.empty() )
@@ -155,7 +196,10 @@ public:
 
         send_raw("INVITE "+ nickname +" "+ channel);
     }
-
+/**
+    Joins a channel.
+    @param channel The channel to join.
+*/
     void join( const std::string &channel )
     {
         if( channel.empty() )
@@ -167,7 +211,12 @@ public:
         }
         send_raw("JOIN "+ channel);
     }
-
+/**
+    Kick someone from a channel.
+    @param nickname The user to kick off.
+    @param channel  The channel from which the user should be kicked out.
+    @param reason   The kick reason (optional).
+*/
     void kick( const std::string &nickname, const std::string &channel,
                const std::string &reason = std::string() )
     {
