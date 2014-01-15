@@ -1,12 +1,11 @@
 /*
-    Name:,       example/console.cpp
-    Purpose:,    IRC client console example
-    Author:,     Andrea Zanellato
+    Name:        example/console.cpp
+    Purpose:     IRC client console example
+    Author:      Andrea Zanellato
     Modified by: 
-    Created:,    2014/01/08
+    Created:     2014/01/08
     Licence:     Boost Software License, Version 1.0
 */
-
 #include <iostream>
 #include <functional>
 #include <thread>
@@ -20,9 +19,16 @@ auto as_integer(Enumeration const value)
     return static_cast<typename std::underlying_type<Enumeration>::type>(value);
 }
 
+void on_channel_msg( const std::string &origin,
+                     const std::string &/*channel*/,
+                     const std::string &message )
+{
+    std::cout << "<" << origin << "> " << message << '\n';
+}
+
 void on_numeric( irc::reply_code command )
 {
-//  std::cout << "# command:" << as_integer(command) << '\n';
+    ;// std::cout << "# command:" << as_integer(command) << '\n';
 }
 
 void on_connected()
@@ -35,10 +41,7 @@ void on_disconnect()
     std::cout << "################### Disconnected ###################\n";
 }
 
-void on_message( const std::string &message )
-{
-//  std::cout << message << '\n';
-}
+namespace ph = std::placeholders;
 
 int main( int argc, char **argv )
 {
@@ -50,14 +53,15 @@ int main( int argc, char **argv )
             return 1;
         }
 
-        irc::io_service_type io_service;
-        irc::client::pointer c = irc::client::create(io_service);
+        irc::io_service  io_service;
+        irc::client::ptr c = irc::client::create(io_service);
 
         c->connect( argv[1], argv[2], argv[3] );
 
         c->on_connected( &on_connected );
         c->on_disconnected( &on_disconnect );
-        c->on_numeric_reply( std::bind(&on_numeric, std::placeholders::_1) );
+//      c->on_numeric_reply( std::bind(&on_numeric, ph::_1) );
+        c->on_channel_msg( std::bind(&on_channel_msg, ph::_1, ph::_2, ph::_3) );
 
         c->join( argv[4] );
 

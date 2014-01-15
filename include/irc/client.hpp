@@ -27,11 +27,10 @@ namespace ph = std::placeholders;
 namespace irc {
 
 typedef boost::system::error_code      system_error_code;
-typedef boost::asio::io_service        io_service_type;
-typedef boost::asio::ip::tcp::resolver resolver_type;
-typedef boost::asio::ip::tcp::socket   socket_type;
-typedef boost::asio::streambuf         streambuf_type;
-typedef irc::error_code                error_code;
+typedef boost::asio::io_service        io_service;
+typedef boost::asio::ip::tcp::resolver resolver;
+typedef boost::asio::ip::tcp::socket   socket;
+typedef boost::asio::streambuf         streambuf;
 
 const int max_params = 15; /**< RFC 2812: maximum parameters allowed */
 /**
@@ -39,22 +38,22 @@ const int max_params = 15; /**< RFC 2812: maximum parameters allowed */
 
     IRC Client class.
 */
-class client : public std::enable_shared_from_this< client >
-             , public boost::asio::coroutine
-             , boost::noncopyable
+class client: public std::enable_shared_from_this< client >
+            , public boost::asio::coroutine
+            , boost::noncopyable
 {
 public:
-    typedef std::shared_ptr< client > pointer;
+/** Shared client pointer */
+    typedef std::shared_ptr< client > ptr;
 /**
     Static constructor.
     @param io_service Reference to the ASIO io_service controller.
     @return Shared pointer to a new client object.
 */
-    static pointer create( io_service_type &io_service )
-    {
-        pointer new_client( new client( io_service ) );
-        return new_client;
-    }
+    static ptr create( io_service &io_service );
+
+/** Destructor. */
+    ~client();
 /**
     Connects to an irc server via IPV4.
     @param hostname Server hostname to connect to.
@@ -69,148 +68,50 @@ public:
                   const std::string &nickname = "nobody",
                   const std::string &username = "nobody",
                   const std::string &realname = "noname",
-                  const std::string &srv_pwrd = std::string() )
-    {
-        resolver_type           resolver( m_io_service );
-        resolver_type::query    query( hostname, port );
-        resolver_type::iterator endpoint_iter = resolver.resolve( query );
-
-        m_nickname = nickname;
-        m_username = username;
-        m_realname = realname;
-
-        boost::asio::async_connect( m_socket, endpoint_iter,
-                                    std::bind( &client::handle_connect,
-                                                shared_from_this(), ph::_1 ) );
-    }
+                  const std::string &srv_pwrd = std::string() );
 /**
-    Returns the connection state.
-    @return The connection state.
+    Returns the connection state. 
+    @return @true if connected, @false otherwise.
 */
-    bool connected() const { return m_started; }
+    bool connected() const { return m_connected; }
 /**
-    Disconnects from the irc server.
+    Disconnects the active connection with the irc server.
 */
-    void disconnect()
-    {
-        if(!m_started)
-        {
-            m_lasterror = error_code::invalid_request;
-            return;
-        }
-
-        m_started = false;
-        if( m_on_disconnected )
-            m_on_disconnected();
-
-        m_io_service.post([this]() { m_socket.close(); });
-    }
+    void disconnect();
 /**
-    Sends a raw command to the server.
-    @param command The command string to send.
+    Sends a raw cmd_str to the server.
+    @param cmd_str The cmd_str string to send.
 */
-    void send_raw( const std::string &command )
-    {
-        if( !m_started )
-        {
-            m_lasterror = error_code::invalid_request;
-
-            m_io_service.post( std::bind( &client::send_raw,
-                                           shared_from_this(), command ) );
-        }
-        else
-        {
-            m_lasterror = error_code::success;
-
-            m_buf_write.consume( m_buf_write.size() );
-            std::ostream out( &m_buf_write );
-            out << command << "\r\n";
-
-            m_io_service.post( std::bind( &client::step, shared_from_this(),
-                                           system_error_code(), 0 ) );
-        }
-    }
+    void send_raw( const std::string &cmd_str );
 /**
-    An user action, the typical /me command.
+    An user action, the typical /me cmd_str.
     @param destination A channel or nickname target to send the action message.
     @param message     The action message.
 */
-    void action( const std::string &destination, const std::string &message )
-    {
-        if( destination.empty() || message.empty() )
-        {
-            m_lasterror = error_code::invalid_request;
-            m_io_service.post( std::bind( &client::step, shared_from_this(),
-                                           system_error_code(), 0 ) );
-            return;
-        }
-
-        send_raw("PRIVMSG "+ destination +" :\x01"+"ACTION "+ message +"\x01");
-    }
+    void action( const std::string &destination, const std::string &message );
 /**
     Sends a CTCP request.
     @param nickname The target nickname to send the request to.
     @param request  The CTCP request string.
 */
-    void ctcp_request( const std::string &nickname, const std::string &request )
-    {
-        if( nickname.empty() || request.empty() )
-        {
-            m_lasterror = error_code::invalid_request;
-            m_io_service.post( std::bind( &client::step, shared_from_this(),
-                                           system_error_code(), 0 ) );
-            return;
-        }
-        send_raw("PRIVMSG "+ nickname +" :\x01"+ request +"\x01");
-    }
+    void ctcp_request( const std::string &nickname, const std::string &request );
 /**
     Sends a CTCP reply.
     @param nickname The target nickname to send the reply to.
     @param reply    The CTCP reply string.
 */
-    void ctcp_reply( const std::string &nickname, const std::string &reply )
-    {
-        if( nickname.empty() || reply.empty() )
-        {
-            m_lasterror = error_code::invalid_request;
-            m_io_service.post( std::bind( &client::step, shared_from_this(),
-                                           system_error_code(), 0 ) );
-            return;
-        }
-        send_raw("NOTICE "+ nickname +" :\x01"+ reply +"\x01");
-    }
+    void ctcp_reply( const std::string &nickname, const std::string &reply );
 /**
     Sends an invitation to some user to join a channel.
     @param nickname The user to invite.
     @param channel  The channel to join for the invited user.
 */
-    void invite( const std::string &nickname, const std::string &channel )
-    {
-        if( nickname.empty() || channel.empty() )
-        {
-            m_lasterror = error_code::invalid_request;
-            m_io_service.post( std::bind( &client::step, shared_from_this(),
-                                           system_error_code(), 0 ) );
-            return;
-        }
-
-        send_raw("INVITE "+ nickname +" "+ channel);
-    }
+    void invite( const std::string &nickname, const std::string &channel );
 /**
     Joins a channel.
     @param channel The channel to join.
 */
-    void join( const std::string &channel )
-    {
-        if( channel.empty() )
-        {
-            m_lasterror = error_code::invalid_request;
-            m_io_service.post( std::bind( &client::step, shared_from_this(),
-                                           system_error_code(), 0 ) );
-            return;
-        }
-        send_raw("JOIN "+ channel);
-    }
+    void join( const std::string &channel );
 /**
     Kick someone from a channel.
     @param nickname The user to kick off.
@@ -218,366 +119,405 @@ public:
     @param reason   The kick reason (optional).
 */
     void kick( const std::string &nickname, const std::string &channel,
-               const std::string &reason = std::string() )
+               const std::string &reason = std::string() );
+/**
+    Requests a list of channel details (name, user count and topic) from the server.
+    @param channels A comma separated list of channels from which to list details.
+                    If not specified, all server's channels will be listed.
+*/
+    void list( const std::string &channels = std::string() );
+/**
+    Requests the channel's user list.
+    @param channel The channel where users are in.
+*/
+    void names( const std::string &channel );
+/**
+    Returns a nickname string from a hostmask.
+    @param hostmask The hostmask to convert from.
+    @return A nickname string.
+*/
+    std::string nickname_from( const std::string &hostmask ) const;
+/**
+    Sends a notice message to an user or channel.
+    @param destination The user or channel where to send the message.
+    @param message     The message to send as notice.
+*/
+    void notice( const std::string &destination, const std::string &message );
+/**
+    Leaves a specified channel.
+    @param channel The channel to leave.
+*/
+    void part( const std::string &channel );
+/**
+    Sends a message to an user or channel.
+    @param destination The user or channel where to send the message.
+    @param message     The message to send.
+*/
+    void privmsg( const std::string &destination, const std::string &message );
+/**
+    Quits the client connection.
+    @param reason The quit reason (optional).
+*/
+    void quit( const std::string &reason = std::string() );
+/**
+    Requests or sets a channel topic.
+    @param channel The channel where to get/set the topic.
+    @param topic   The new topic to set. If not specified,
+                   the current topic is returned.
+*/
+    void topic( const std::string &channel, const std::string &topic = std::string() );
+/**
+    Returns the irc client version.
+    @return The irc client version.
+*/
+    std::string version() const;
+/**
+    Signal fired when a message was sent to a channel.
+    @param func The function to call back.
+*/
+    void on_channel_msg( std::function<void(const std::string &,
+                                            const std::string &,
+                                            const std::string &)> func )
     {
-        if( nickname.empty() || channel.empty() )
-        {
-            m_lasterror = error_code::invalid_request;
-            m_io_service.post( std::bind( &client::step, shared_from_this(),
-                                           system_error_code(), 0 ) );
-            return;
-        }
-
-        if( reason.empty() )
-            send_raw("KICK "+ channel +" "+ nickname);
-        else
-            send_raw("KICK "+ channel +" "+ nickname +" :"+ reason);
+        m_on_chanmsg = func;
     }
-
-    void list( const std::string &channel = std::string() )
-    {
-        send_raw( channel.empty() ? "LIST" : "LIST "+ channel );
-    }
-
-    void names( const std::string &channel )
-    {
-        if( channel.empty() )
-        {
-            m_lasterror = error_code::invalid_request;
-            m_io_service.post( std::bind( &client::step, shared_from_this(),
-                                           system_error_code(), 0 ) );
-            return;
-        }
-
-        send_raw("NAMES "+ channel);
-    }
-
-    std::string nickname_from( const std::string &hostmask ) const
-    {
-        if( hostmask.empty() )
-            return std::string();
-
-        std::size_t found = hostmask.find_first_of('!');
-        if( found != std::string::npos )
-            return hostmask.substr( 0, found );
-
-        return std::string();
-    }
-
-    void notice( const std::string &nickname, const std::string &message )
-    {
-        if( nickname.empty() || message.empty() )
-        {
-            m_lasterror = error_code::invalid_request;
-            m_io_service.post( std::bind( &client::step, shared_from_this(),
-                                           system_error_code(), 0 ) );
-            return;
-        }
-
-        send_raw("NOTICE "+ nickname +" :"+ message);
-    }
-
-    void part( const std::string &channel )
-    {
-        if( channel.empty() )
-        {
-            m_lasterror = error_code::invalid_request;
-            m_io_service.post( std::bind( &client::step, shared_from_this(),
-                                           system_error_code(), 0 ) );
-            return;
-        }
-
-        send_raw("PART "+ channel);
-    }
-
-    void privmsg( const std::string &destination, const std::string &message )
-    {
-        if( destination.empty() || message.empty() )
-        {
-            m_lasterror = error_code::invalid_request;
-            m_io_service.post( std::bind( &client::step, shared_from_this(),
-                                           system_error_code(), 0 ) );
-            return;
-        }
-
-        send_raw("PRIVMSG "+ destination +" :"+ message);
-    }
-
-    void quit( const std::string &reason = std::string() )
-    {
-        std::string command = reason.empty() ? "QUIT" : "QUIT :"+ reason;
-        send_raw( command );
-    }
-
-    void topic( const std::string &channel, const std::string &topic = std::string() )
-    {
-        if( channel.empty() )
-        {
-            m_lasterror = error_code::invalid_request;
-            m_io_service.post( std::bind( &client::step, shared_from_this(),
-                                           system_error_code(), 0 ) );
-            return;
-        }
-
-        std::string command;
-
-        if( topic.empty() )
-            command = "TOPIC "+ channel;
-        else
-            command = "TOPIC "+ channel +" :"+ topic;
-
-        send_raw( command );
-    }
-
-    std::string version() const
-    {
-        return "VERSION irc::client by Andrea Zanellato v0.1";
-    }
-
+/**
+    Signal fired when the connection was enstablished.
+    @param func The function to call back.
+*/
     void on_connected( std::function<void()> func )
     {
         m_on_connected = func;
     }
-
+/**
+    Signal fired when disconnected from the server.
+    @param func The function to call back.
+*/
     void on_disconnected( std::function<void()> func )
     {
         m_on_disconnected = func;
     }
-
+/**
+    Signal fired when a numeric reply is sent from the IRC server.
+    @param func The function to call back.
+*/
     void on_numeric_reply( std::function<void(reply_code)> func )
     {
         m_on_numeric = func;
     }
 
 private:
-    explicit client( io_service_type &io_service )
-    :   m_io_service(io_service),
+    explicit client( io_service &io_service )
+    :   m_service(io_service),
         m_socket(io_service),
-        m_started(false),
+        m_connected(false),
         m_lasterror(error_code::success)
     {
+        m_buf_read.prepare(512);
+        m_buf_write.prepare(512);
     }
 
-    void step( const system_error_code &ec, size_t /*bytes*/ )
+    client() = delete;
+
+    void loop( const system_error_code &ec, size_t /*bytes*/ )
     {
-        if( !ec )
+        if( !ec ) { BOOST_ASIO_CORO_REENTER( this ) { for( ;; )
         {
-            BOOST_ASIO_CORO_REENTER( this )
-            {
-                for( ;; )
-                {
-                    BOOST_ASIO_CORO_YIELD
-                    async_read_until( m_socket, m_buf_read, "\r\n",
-                                      std::bind( &client::step, shared_from_this(),
-                                                  ph::_1, ph::_2 ) );
-                    BOOST_ASIO_CORO_YIELD
-                    async_write( m_socket, m_buf_write,
-                                 std::bind( &client::step, shared_from_this(),
-                                             ph::_1, ph::_2 ) );
-                    BOOST_ASIO_CORO_YIELD
-                    handle_read();
-                }
-            }
-        }
-        else
+        BOOST_ASIO_CORO_YIELD
         {
-            disconnect();
+            async_write( m_socket, m_buf_write,
+                         std::bind( &client::loop, shared_from_this(),
+                                     ph::_1, ph::_2 ) );
         }
+        BOOST_ASIO_CORO_YIELD
+        {
+            async_read_until( m_socket, m_buf_read, "\r\n",
+                              std::bind( &client::loop, shared_from_this(),
+                                          ph::_1, ph::_2 ) );
+        }
+        BOOST_ASIO_CORO_YIELD
+        {
+            m_service.post( std::bind( &client::handle_read, shared_from_this() ) );
+        }
+        }}}
     }
 
     void handle_connect( const system_error_code &ec )
     {
-        if( !ec && !m_started )
+        if( !ec && !m_connected )
         {
             if( m_on_connected )
                 m_on_connected();
 
             std::ostream out( &m_buf_write );
             std::string
-            nick = boost::str( boost::format("NICK %1%\n") % m_nickname ),
+            nick = boost::str( boost::format("NICK %1%\r\n") % m_nickname ),
             user = boost::str( boost::format
-                ("USER %1% unknown unknown :%2%\n") % m_username % m_realname );
+                ("USER %1% unknown unknown :%2%\r\n") % m_username % m_realname );
 
             out << nick << user;
 
-            m_io_service.post( std::bind( &client::step,
+            m_service.post( std::bind( &client::loop,
                                            shared_from_this(), ec, 0 ) );
         }
     }
 
     void handle_read()
     {
+        m_connected = true;
         std::istream in( &m_buf_read );
         std::string  line;
         std::getline( in, line );
-
         if( line.empty() )
         {
-            m_io_service.post( std::bind( &client::step, shared_from_this(),
+            m_service.post( std::bind( &client::loop, shared_from_this(),
                                            system_error_code(), 0 ) );
             return;
         }
 
-        line.pop_back(); // remove carriage return
+        // Remove carriage return
+        line.pop_back();
 
 #ifdef IRC_DEBUG
         std::cout << line << '\n';
 #endif
         // Extract prefix
-        std::string prefix;
-        std::size_t start = line.find_first_of(':');
-        std::size_t end   = line.find_first_of(' ');
-        if( (start == 0) && (end != std::string::npos) && (end < line.size()) )
+        std::string sender;
+        std::size_t found = line.find_first_of(' ');
+        if( line.find(':') != std::string::npos && found != std::string::npos )
         {
-            prefix = line.substr( 1, end - 1 );
-            line.replace( 0, end + 1, "" );
-#ifdef IRC_DEBUG
-            std::cout << "# prefix=" << prefix << '\n';
-#endif
+            line.replace( 0, 1, "" );
+            sender = line.substr( 0, found - 1 );
+            line.replace( 0, found, "" );
         }
 
         // Extract command
-        std::string command;
-        int icommand = 0;
-        end = line.find_first_of(' ');
-        if( (end != std::string::npos) && (end < line.size()) )
+        std::string cmd_str;
+        int cmd_num = 0;
+        found = line.find(' ');
+        if( found != std::string::npos )
         {
-            command = line.substr( 0, end );
+            cmd_str = line.substr( 0, found );
 
-            bool is_numeric = std::find_if( command.begin(), command.end(),
-                [](char ch) { return !std::isdigit(ch); }) == command.end();
+            bool is_numeric = std::find_if( cmd_str.begin(), cmd_str.end(),
+                [](char ch) { return !std::isdigit(ch); }) == cmd_str.end();
 
             if( is_numeric )
             {
-                icommand = std::atoi( command.c_str() );
-                reply_code rplcode = static_cast<reply_code>( icommand );
+                cmd_num = std::atoi( cmd_str.c_str() );
+                reply_code rplcode = static_cast<reply_code>( cmd_num );
                 if( m_on_numeric )
                     m_on_numeric( rplcode );
+#ifdef IRC_DEBUG
+                std::cout << "# command:" << cmd_num << '\n';
+#endif
             }
 #ifdef IRC_DEBUG
-            else { std::cout << "# command=" << command << '\n'; }
+            else { std::cout << "# command:" << cmd_str << '\n'; }
 #endif
-            line.replace( 0, end + 1, "" );
+            line.replace( 0, found + 1, "" );
         }
 
-        // Extract message
-        std::string message;
-        start = line.find_first_of(':');
-        if( (start != std::string::npos) && (start < line.size()) )
+        // Extract recipient
+        std::string recipient;
+        found = line.find_first_of(' ');
+        if( found != std::string::npos )
         {
-            message = line.substr( start + 1 );
-            line.replace( start, line.size(), "" );
+            recipient = line.substr( 0, found );
+            line.replace( 0, found, "" );
         }
 
-        // Extract params - TODO: command 005 splitted incorrectly
+        // Extract last param
+        std::string last_param;
+        found = line.find(" :");
+        if( found != std::string::npos )
+        {
+            last_param = line.substr( found + 2, line.size() );
+            line.replace( found, line.size(), "" );
+        }
+
+        // Split line to params
         std::vector<std::string> params;
-        boost::trim( line );
-        boost::split( params, line, boost::is_any_of("\t "));
-        if( !message.empty() )
-            params.push_back( message );
+        if( !line.empty() )
+            boost::split( params, line, boost::is_any_of("\t ") );
 
-#ifdef IRC_DEBUG
-        size_t i = 0;
-        for( auto it = std::begin(params); it != std::end(params); ++it )
+        if( !last_param.empty() )
+            params.push_back(last_param);
+
+        // Extract params
+        std::string content;
+        if( params.size() )
         {
-            std::cout << "# param[" << i << "]=" << *it << '\n';
-            ++i;
+            content = params[0];
+            for( size_t i = 1; i < params.size(); ++i )
+                content += " " + params[i];
         }
-#endif
-        if( command == "PING" && params.size() )
+
+        // Handle ping TODO: Swap recipient with sender for ERROR JOIN...
+        if( cmd_str == "PING" && !recipient.empty() )
         {
-            m_io_service.dispatch( std::bind( &client::handle_ping,
-                                               shared_from_this(), params[0] ) );
+            std::swap( recipient, sender );
+            if( sender.find(':') != std::string::npos )
+                sender.replace( 0, 1, "" );
+
+            m_service.dispatch( std::bind( &client::pong,
+                                               shared_from_this(), sender ) );
         }
-        else if( command == "PRIVMSG" && (params.size() > 1) )
+        else if( cmd_str == "PRIVMSG" && !content.empty() )
         {
-            std::size_t msg_len = params[1].size();
+            std::string sender_nick = nickname_from( sender );
+            if( content.find(':') != std::string::npos )
+                content.replace( 0, 1, "" );
+
+            std::size_t msg_len = content.size();
 
             // CTCP requests starts/ends with 0x01
-            if( params[1][0] == 0x01 && params[1][msg_len - 1] == 0x01 )
+            if( content[0] == 0x01 && content[msg_len - 1] == 0x01 )
             {
                 msg_len -= 2;
-                std::string ctcp_str = params[1].substr( 1, msg_len );
-                std::string nickname = nickname_from( prefix );
-                std::size_t end      = ctcp_str.find_first_of(' ');
+                std::string ctcp_str = content.substr( 1, msg_len );
 
-                if( end != std::string::npos && msg_len > 2 )
+                if( ctcp_str.find("ACTION") != std::string::npos )
                 {
-                    std::string cmd_str = ctcp_str.substr(0);
+                    if( m_on_action )
+                        m_on_action(ctcp_str);
                 }
-
-                std::size_t found = ctcp_str.find("ACTION");
-                if( found != std::string::npos )
+                else if( ctcp_str.find("DCC") != std::string::npos )
                 {
-                    //
-                }
-                found = ctcp_str.find("DCC");
-                if( found != std::string::npos )
-                {
-                    //
                     if( m_on_dcc_req )
                         m_on_dcc_req(ctcp_str);
                 }
-                found = ctcp_str.find("FINGER");
-                if( found != std::string::npos )
+                else if( ctcp_str.find("FINGER") != std::string::npos )
+                {
+                    
+                }
+                else if( ctcp_str.find("PING") != std::string::npos )
+                {
+                    if( !sender_nick.empty() )
+                        ctcp_reply( sender_nick, ctcp_str );
+                }
+                else if( ctcp_str.find("TIME") != std::string::npos )
                 {
                     //
                 }
-                found = ctcp_str.find("PING");
-                if( found != std::string::npos )
+                else if( ctcp_str.find("VERSION") != std::string::npos )
                 {
-                    ctcp_reply( nickname, ctcp_str );
-                }
-                found = ctcp_str.find("TIME");
-                if( found != std::string::npos )
-                {
-                    //
-                }
-                found = ctcp_str.find("VERSION");
-                if( found != std::string::npos )
-                {
-                    std::string ver = version();
-                    if( !nickname.empty() )
-                        ctcp_reply( nickname, ver );
-                }
-                if( found == std::string::npos )
-                {
-                    //
+                    if( m_on_version )
+                    {
+                        m_on_version();
+                    }
+                    else
+                    {
+                        if( !sender_nick.empty() )
+                            ctcp_reply( sender_nick, version() );
+                    }
                 }
             }
+            else if( recipient.find(m_nickname) != std::string::npos )
+            {
+                if( m_on_privmsg )
+                    m_on_privmsg( sender_nick, sender, content );
+            }
+            else
+            {
+                if( m_on_chanmsg )
+                    m_on_chanmsg( sender_nick, recipient, content );
+            }
         }
-        m_started = true;
-        m_io_service.post( std::bind( &client::step, shared_from_this(),
+        else if( cmd_str == "NOTICE" && !content.empty() )
+        {
+            std::size_t msg_len  = content.size();
+            std::string sender_nick = nickname_from( sender );
+
+            // CTCP
+            if( content[0] == 0x01 && content[msg_len - 1] == 0x01 )
+            {
+                msg_len -= 2;
+                std::string ctcp_str = content.substr( 1, msg_len );
+            }
+            else if( recipient.find(m_nickname) != std::string::npos )
+            {
+                if( m_on_privntc )
+                    m_on_privntc( sender_nick, recipient, content );
+            }
+            else
+            {
+                if( m_on_channtc )
+                    m_on_channtc( sender_nick, recipient, content );
+            }
+        }
+        else if(cmd_str == "INVITE")
+        {
+            if( m_on_invite )
+            {
+                std::string sender_nick = nickname_from( sender );
+                m_on_invite( sender_nick, recipient, content );
+            }
+        }
+        else if(cmd_str == "KILL")
+        {
+            ;// ignore this event, not all servers generate this.
+        }
+        else // Unknown cmd_str
+        {
+            if( m_on_unknown )
+                m_on_unknown();
+        }
+#ifdef IRC_DEBUG
+        std::cout << "# message:" << content   << '\n'
+//                << "# command:" << cmd_str   << '\n'
+                  << "# from   :" << sender    << '\n'
+                  << "# to     :" << recipient << '\n';
+#endif
+        m_service.post( std::bind( &client::loop, shared_from_this(),
                                        system_error_code(), 0 ) );
     }
 
-    void handle_ping( const std::string &sender )
-    {
-        std::string command = "PONG " + sender + "\r\n";
-        send_raw( command );
-    }
+    void pong( const std::string &sender ) { send_raw("PONG " + sender); }
 
     void handle_ctcp( const std::string &sender )
     {
         
     }
 
-    io_service_type   &m_io_service;
-    socket_type        m_socket;
-    bool               m_started;
-    std::string        m_nickname,
-                       m_username,
-                       m_realname;
-    streambuf_type     m_buf_read,
-                       m_buf_write;
-    error_code         m_lasterror;
+    io_service &m_service;
+    socket      m_socket;
+    bool        m_connected;
+    std::string m_nickname,
+                m_username,
+                m_realname;
+    streambuf   m_buf_read,
+                m_buf_write;
+    error_code  m_lasterror;
 
+    std::function<void()> m_on_unknown;
+    std::function<void(const std::string &,
+                       const std::string &,
+                       const std::string &)> m_on_invite;
+    std::function<void(const std::string &,
+                       const std::string &,
+                       const std::string &)> m_on_channtc;
+    std::function<void(const std::string &,
+                       const std::string &,
+                       const std::string &)> m_on_privntc;
+    std::function<void(const std::string &,
+                       const std::string &,
+                       const std::string &)> m_on_chanmsg;
+    std::function<void(const std::string &,
+                       const std::string &,
+                       const std::string &)> m_on_privmsg;
+    std::function<void(const std::string &)> m_on_action;
     std::function<void(const std::string &)> m_on_dcc_req;
     std::function<void(reply_code)>          m_on_numeric;
     std::function<void()>                    m_on_connected;
     std::function<void()>                    m_on_disconnected;
+    std::function<void()>                    m_on_version;
 };
 
 } // namespace irc
+
+#ifdef IRC_CLIENT_HEADER_ONLY
+    #include "irc/impl/client.ipp"
+#endif
 
 #endif // IRC_CLIENT_HPP
