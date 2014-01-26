@@ -16,12 +16,19 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/asio.hpp>
 #include <boost/format.hpp>
+#include <boost/fusion/include/vector.hpp>
 #include <boost/system/error_code.hpp>
 
+#include "irc/command.hpp"
+#include "irc/ctcp/command.hpp"
 #include "irc/error.hpp"
-#include "irc/numeric.hpp"
+#include "irc/message.hpp"
+#include "irc/types.hpp"
+#include "irc/impl/parser.hpp"
+#include "irc/impl/ctcp/parser.hpp"
 
-namespace ph = std::placeholders;
+namespace ph  = std::placeholders;
+namespace fsn = boost::fusion;
 
 /** Main namespace */
 namespace irc {
@@ -31,8 +38,19 @@ typedef boost::asio::io_service        io_service;
 typedef boost::asio::ip::tcp::resolver resolver;
 typedef boost::asio::ip::tcp::socket   socket;
 typedef boost::asio::streambuf         streambuf;
+typedef std::string::const_iterator    iterator_type;
+typedef message_parser<iterator_type>  message_parser_type;
+
+using ctcp_message_type = fsn::vector<ctcp::command, std::string>;
 
 const int max_params = 15; /**< RFC 2812: maximum parameters allowed */
+/**
+    Returns if the specified mask represents a channel.
+    @param mask The channel mask to check.
+    @return @true if it's a channel, @false otherwise.
+    @see http://tools.ietf.org/html/rfc2811#section-2.1
+*/
+static bool is_channel( const std::string &mask );
 /**
     @class client
 
@@ -79,12 +97,13 @@ public:
 */
     void disconnect();
 /**
-    Sends a raw cmd_str to the server.
-    @param cmd_str The cmd_str string to send.
+    Sends a raw command to the server.
+    @param command The command string to send.
 */
-    void send_raw( const std::string &cmd_str );
+    void send_raw( const std::string &command );
 /**
-    An user action, the typical /me cmd_str.
+    An user (CTCP) action command,
+    the typical '/me' in some IRC client applications.
     @param destination A channel or nickname target to send the action message.
     @param message     The action message.
 */
@@ -132,11 +151,10 @@ public:
 */
     void names( const std::string &channel );
 /**
-    Returns a nickname string from a hostmask.
-    @param hostmask The hostmask to convert from.
-    @return A nickname string.
+    Changes your nickname.
+    @param newnick The new nick to set.
 */
-    std::string nickname_from( const std::string &hostmask ) const;
+    void nick( const std::string &newnick );
 /**
     Sends a notice message to an user or channel.
     @param destination The user or channel where to send the message.
@@ -149,6 +167,13 @@ public:
 */
     void part( const std::string &channel );
 /**
+    Replies to an IRC server PING command.
+    Some servers sends PING commands to clients to check their status;
+    a client must reply with a PONG message to keepalive to avoid disconnections.
+    @param destination The IRC server to send the PONG reply.
+*/
+    void pong( const std::string &destination );
+/**
     Sends a message to an user or channel.
     @param destination The user or channel where to send the message.
     @param message     The message to send.
@@ -159,6 +184,10 @@ public:
     @param reason The quit reason (optional).
 */
     void quit( const std::string &reason = std::string() );
+
+    void set_mode( const std::string &mode );
+
+    void set_channel_mode( const std::string &channel, const std::string &mode );
 /**
     Requests or sets a channel topic.
     @param channel The channel where to get/set the topic.
@@ -172,39 +201,149 @@ public:
 */
     std::string version() const;
 /**
-    Signal fired when a message was sent to a channel.
+    Signal fired when an user sent a public message to a channel.
     @param func The function to call back.
+    @return The connection object to disconnect from the signal.
 */
-    void on_channel_msg( std::function<void(const std::string &,
-                                            const std::string &,
-                                            const std::string &)> func )
-    {
-        m_on_chanmsg = func;
-    }
+    template<typename Callback>
+    signals::connection connect_on_channel_message( Callback&& func )
+    { return m_on_chanmsg.connect( std::forward<Callback>(func) ); }
 /**
-    Signal fired when the connection was enstablished.
+    Signal fired when an user sent a public notice to a channel.
     @param func The function to call back.
+    @return The connection object to disconnect from the signal.
 */
-    void on_connected( std::function<void()> func )
-    {
-        m_on_connected = func;
-    }
+    template<typename Callback>
+    signals::connection connect_on_channel_notice( Callback&& func )
+    { return m_on_channtc.connect( std::forward<Callback>(func) ); }
 /**
-    Signal fired when disconnected from the server.
+    Signal fired when an user sets the channel modes.
     @param func The function to call back.
+    @return The connection object to disconnect from the signal.
 */
-    void on_disconnected( std::function<void()> func )
-    {
-        m_on_disconnected = func;
-    }
+    template<typename Callback>
+    signals::connection connect_on_channel_mode( Callback&& func )
+    { return m_on_chanmode.connect( std::forward<Callback>(func) ); }
+/**
+    Signal fired when an user invited you to join a channel.
+    @param func The function to call back.
+    @return The connection object to disconnect from the signal.
+*/
+    template<typename Callback>
+    signals::connection connect_on_invite( Callback&& func )
+    { return m_on_invite.connect( std::forward<Callback>(func) ); }
+/**
+    Signal fired when an user joined a channel.
+    @param func The function to call back.
+    @return The connection object to disconnect from the signal.
+*/
+    template<typename Callback>
+    signals::connection connect_on_join( Callback&& func )
+    { return m_on_join.connect( std::forward<Callback>(func) ); }
+/**
+    Signal fired when an user kick someone out of a channel.
+    @param func The function to call back.
+    @return The connection object to disconnect from the signal.
+*/
+    template<typename Callback>
+    signals::connection connect_on_kick( Callback&& func )
+    { return m_on_kick.connect( std::forward<Callback>(func) ); }
+/**
+    Signal fired when an user changes his/her nick.
+    @param func The function to call back.
+    @return The connection object to disconnect from the signal.
+*/
+    template<typename Callback>
+    signals::connection connect_on_nick( Callback&& func )
+    { return m_on_nick.connect( std::forward<Callback>(func) ); }
+/**
+    Signal fired when an user sent a private notice to someone else.
+    @param func The function to call back.
+    @return The connection object to disconnect from the signal.
+*/
+    template<typename Callback>
+    signals::connection connect_on_private_notice( Callback&& func )
+    { return m_on_notice.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when a numeric reply is sent from the IRC server.
     @param func The function to call back.
+    @return The connection object to disconnect from the signal.
 */
-    void on_numeric_reply( std::function<void(reply_code)> func )
-    {
-        m_on_numeric = func;
-    }
+    template<typename Callback>
+    signals::connection connect_on_numeric_command( Callback&& func )
+    { return m_on_numeric.connect( std::forward<Callback>(func) ); }
+/**
+    Signal fired when an user has left a channel.
+    @param func The function to call back.
+    @return The connection object to disconnect from the signal.
+*/
+    template<typename Callback>
+    signals::connection connect_on_part( Callback&& func )
+    { return m_on_part.connect( std::forward<Callback>(func) ); }
+/**
+    Signal fired when recieving a PING message from an IRC server.
+    @param func The function to call back.
+    @return The connection object to disconnect from the signal.
+*/
+    template<typename Callback>
+    signals::connection connect_on_ping( Callback&& func )
+    { return m_on_ping.connect( std::forward<Callback>(func) ); }
+/**
+    Signal fired when an user sent a private message to someone else.
+    @param func The function to call back.
+    @return The connection object to disconnect from the signal.
+*/
+    template<typename Callback>
+    signals::connection connect_on_private_message( Callback&& func )
+    { return m_on_privmsg.connect( std::forward<Callback>(func) ); }
+/**
+    Signal fired when an user quits IRC.
+    @param func The function to call back.
+    @return The connection object to disconnect from the signal.
+*/
+    template<typename Callback>
+    signals::connection connect_on_quit( Callback&& func )
+    { return m_on_quit.connect( std::forward<Callback>(func) ); }
+/**
+    Signal fired when an user changes a channel topic.
+    @param func The function to call back.
+    @return The connection object to disconnect from the signal.
+*/
+    template<typename Callback>
+    signals::connection connect_on_topic( Callback&& func )
+    { return m_on_topic.connect( std::forward<Callback>(func) ); }
+/**
+    Signal fired when your user mode changes.
+    @param func The function to call back.
+    @return The connection object to disconnect from the signal.
+*/
+    template<typename Callback>
+    signals::connection connect_on_user_mode( Callback&& func )
+    { return m_on_usermode.connect( std::forward<Callback>(func) ); }
+/**
+    Signal fired when an unsupported message command is sent.
+    @param func The function to call back.
+    @return The connection object to disconnect from the signal.
+*/
+    template<typename Callback>
+    signals::connection connect_on_unknown_command( Callback&& func )
+    { return m_on_unknown.connect( std::forward<Callback>(func) ); }
+/**
+    Signal fired when the connection was enstablished.
+    @param func The function to call back.
+    @return The connection object to disconnect from the signal.
+*/
+    template<typename Callback>
+    signals::connection connect_on_connected( Callback&& func )
+    { return m_on_connected.connect( std::forward<Callback>(func) ); }
+/**
+    Signal fired when disconnected from the server.
+    @param func The function to call back.
+    @return The connection object to disconnect from the signal.
+*/
+    template<typename Callback>
+    signals::connection connect_on_disconnected( Callback&& func )
+    { return m_on_disconnected.connect( std::forward<Callback>(func) ); }
 
 private:
     explicit client( io_service &io_service )
@@ -219,266 +358,12 @@ private:
 
     client() = delete;
 
-    void loop( const system_error_code &ec, size_t /*bytes*/ )
-    {
-        if( !ec ) { BOOST_ASIO_CORO_REENTER( this ) { for( ;; )
-        {
-        BOOST_ASIO_CORO_YIELD
-        {
-            async_write( m_socket, m_buf_write,
-                         std::bind( &client::loop, shared_from_this(),
-                                     ph::_1, ph::_2 ) );
-        }
-        BOOST_ASIO_CORO_YIELD
-        {
-            async_read_until( m_socket, m_buf_read, "\r\n",
-                              std::bind( &client::loop, shared_from_this(),
-                                          ph::_1, ph::_2 ) );
-        }
-        BOOST_ASIO_CORO_YIELD
-        {
-            m_service.post( std::bind( &client::handle_read, shared_from_this() ) );
-        }
-        }}}
-    }
+    void loop( const system_error_code &ec, size_t /*bytes*/ );
+    bool parse( const std::string &message );
 
-    void handle_connect( const system_error_code &ec )
-    {
-        if( !ec && !m_connected )
-        {
-            if( m_on_connected )
-                m_on_connected();
-
-            std::ostream out( &m_buf_write );
-            std::string
-            nick = boost::str( boost::format("NICK %1%\r\n") % m_nickname ),
-            user = boost::str( boost::format
-                ("USER %1% unknown unknown :%2%\r\n") % m_username % m_realname );
-
-            out << nick << user;
-
-            m_service.post( std::bind( &client::loop,
-                                           shared_from_this(), ec, 0 ) );
-        }
-    }
-
-    void handle_read()
-    {
-        m_connected = true;
-        std::istream in( &m_buf_read );
-        std::string  line;
-        std::getline( in, line );
-        if( line.empty() )
-        {
-            m_service.post( std::bind( &client::loop, shared_from_this(),
-                                           system_error_code(), 0 ) );
-            return;
-        }
-
-        // Remove carriage return
-        line.pop_back();
-
-#ifdef IRC_DEBUG
-        std::cout << line << '\n';
-#endif
-        // Extract prefix
-        std::string sender;
-        std::size_t found = line.find_first_of(' ');
-        if( line.find(':') != std::string::npos && found != std::string::npos )
-        {
-            line.replace( 0, 1, "" );
-            sender = line.substr( 0, found - 1 );
-            line.replace( 0, found, "" );
-        }
-
-        // Extract command
-        std::string cmd_str;
-        int cmd_num = 0;
-        found = line.find(' ');
-        if( found != std::string::npos )
-        {
-            cmd_str = line.substr( 0, found );
-
-            bool is_numeric = std::find_if( cmd_str.begin(), cmd_str.end(),
-                [](char ch) { return !std::isdigit(ch); }) == cmd_str.end();
-
-            if( is_numeric )
-            {
-                cmd_num = std::atoi( cmd_str.c_str() );
-                reply_code rplcode = static_cast<reply_code>( cmd_num );
-                if( m_on_numeric )
-                    m_on_numeric( rplcode );
-#ifdef IRC_DEBUG
-                std::cout << "# command:" << cmd_num << '\n';
-#endif
-            }
-#ifdef IRC_DEBUG
-            else { std::cout << "# command:" << cmd_str << '\n'; }
-#endif
-            line.replace( 0, found + 1, "" );
-        }
-
-        // Extract recipient
-        std::string recipient;
-        found = line.find_first_of(' ');
-        if( found != std::string::npos )
-        {
-            recipient = line.substr( 0, found );
-            line.replace( 0, found, "" );
-        }
-
-        // Extract last param
-        std::string last_param;
-        found = line.find(" :");
-        if( found != std::string::npos )
-        {
-            last_param = line.substr( found + 2, line.size() );
-            line.replace( found, line.size(), "" );
-        }
-
-        // Split line to params
-        std::vector<std::string> params;
-        if( !line.empty() )
-            boost::split( params, line, boost::is_any_of("\t ") );
-
-        if( !last_param.empty() )
-            params.push_back(last_param);
-
-        // Extract params
-        std::string content;
-        if( params.size() )
-        {
-            content = params[0];
-            for( size_t i = 1; i < params.size(); ++i )
-                content += " " + params[i];
-        }
-
-        // Handle ping TODO: Swap recipient with sender for ERROR JOIN...
-        if( cmd_str == "PING" && !recipient.empty() )
-        {
-            std::swap( recipient, sender );
-            if( sender.find(':') != std::string::npos )
-                sender.replace( 0, 1, "" );
-
-            m_service.dispatch( std::bind( &client::pong,
-                                               shared_from_this(), sender ) );
-        }
-        else if( cmd_str == "PRIVMSG" && !content.empty() )
-        {
-            std::string sender_nick = nickname_from( sender );
-            if( content.find(':') != std::string::npos )
-                content.replace( 0, 1, "" );
-
-            std::size_t msg_len = content.size();
-
-            // CTCP requests starts/ends with 0x01
-            if( content[0] == 0x01 && content[msg_len - 1] == 0x01 )
-            {
-                msg_len -= 2;
-                std::string ctcp_str = content.substr( 1, msg_len );
-
-                if( ctcp_str.find("ACTION") != std::string::npos )
-                {
-                    if( m_on_action )
-                        m_on_action(ctcp_str);
-                }
-                else if( ctcp_str.find("DCC") != std::string::npos )
-                {
-                    if( m_on_dcc_req )
-                        m_on_dcc_req(ctcp_str);
-                }
-                else if( ctcp_str.find("FINGER") != std::string::npos )
-                {
-                    
-                }
-                else if( ctcp_str.find("PING") != std::string::npos )
-                {
-                    if( !sender_nick.empty() )
-                        ctcp_reply( sender_nick, ctcp_str );
-                }
-                else if( ctcp_str.find("TIME") != std::string::npos )
-                {
-                    //
-                }
-                else if( ctcp_str.find("VERSION") != std::string::npos )
-                {
-                    if( m_on_version )
-                    {
-                        m_on_version();
-                    }
-                    else
-                    {
-                        if( !sender_nick.empty() )
-                            ctcp_reply( sender_nick, version() );
-                    }
-                }
-            }
-            else if( recipient.find(m_nickname) != std::string::npos )
-            {
-                if( m_on_privmsg )
-                    m_on_privmsg( sender_nick, sender, content );
-            }
-            else
-            {
-                if( m_on_chanmsg )
-                    m_on_chanmsg( sender_nick, recipient, content );
-            }
-        }
-        else if( cmd_str == "NOTICE" && !content.empty() )
-        {
-            std::size_t msg_len  = content.size();
-            std::string sender_nick = nickname_from( sender );
-
-            // CTCP
-            if( content[0] == 0x01 && content[msg_len - 1] == 0x01 )
-            {
-                msg_len -= 2;
-                std::string ctcp_str = content.substr( 1, msg_len );
-            }
-            else if( recipient.find(m_nickname) != std::string::npos )
-            {
-                if( m_on_privntc )
-                    m_on_privntc( sender_nick, recipient, content );
-            }
-            else
-            {
-                if( m_on_channtc )
-                    m_on_channtc( sender_nick, recipient, content );
-            }
-        }
-        else if(cmd_str == "INVITE")
-        {
-            if( m_on_invite )
-            {
-                std::string sender_nick = nickname_from( sender );
-                m_on_invite( sender_nick, recipient, content );
-            }
-        }
-        else if(cmd_str == "KILL")
-        {
-            ;// ignore this event, not all servers generate this.
-        }
-        else // Unknown cmd_str
-        {
-            if( m_on_unknown )
-                m_on_unknown();
-        }
-#ifdef IRC_DEBUG
-        std::cout << "# message:" << content   << '\n'
-//                << "# command:" << cmd_str   << '\n'
-                  << "# from   :" << sender    << '\n'
-                  << "# to     :" << recipient << '\n';
-#endif
-        m_service.post( std::bind( &client::loop, shared_from_this(),
-                                       system_error_code(), 0 ) );
-    }
-
-    void pong( const std::string &sender ) { send_raw("PONG " + sender); }
-
-    void handle_ctcp( const std::string &sender )
-    {
-        
-    }
+    void handle_ctcp( ctcp_message_type ctcp_msg );
+    void handle_message();
+    void handle_read();
 
     io_service &m_service;
     socket      m_socket;
@@ -490,34 +375,42 @@ private:
                 m_buf_write;
     error_code  m_lasterror;
 
-    std::function<void()> m_on_unknown;
-    std::function<void(const std::string &,
-                       const std::string &,
-                       const std::string &)> m_on_invite;
-    std::function<void(const std::string &,
-                       const std::string &,
-                       const std::string &)> m_on_channtc;
-    std::function<void(const std::string &,
-                       const std::string &,
-                       const std::string &)> m_on_privntc;
-    std::function<void(const std::string &,
-                       const std::string &,
-                       const std::string &)> m_on_chanmsg;
-    std::function<void(const std::string &,
-                       const std::string &,
-                       const std::string &)> m_on_privmsg;
-    std::function<void(const std::string &)> m_on_action;
-    std::function<void(const std::string &)> m_on_dcc_req;
-    std::function<void(reply_code)>          m_on_numeric;
-    std::function<void()>                    m_on_connected;
-    std::function<void()>                    m_on_disconnected;
-    std::function<void()>                    m_on_version;
+    message     m_message;
+
+    message_parser_type m_parser;
+
+    sig_message m_on_chanmsg,
+                m_on_channtc,
+                m_on_chanmode,
+                m_on_invite,
+                m_on_join,
+                m_on_kick,
+                m_on_nick,
+                m_on_notice,
+                m_on_numeric,
+                m_on_part,
+                m_on_ping,
+                m_on_privmsg,
+                m_on_quit,
+                m_on_topic,
+                m_on_usermode,
+                m_on_unknown;
+
+    sig_void    m_on_connected,
+                m_on_disconnected;
+
+    sig_ctcp    m_on_ctcp_req,
+                m_on_ctcp_rep;
+
+//  sig_dcc_chat m_on_dcc_chat_req;
+//  sig_dcc_send m_on_dcc_send_req;
 };
 
 } // namespace irc
 
 #ifdef IRC_CLIENT_HEADER_ONLY
     #include "irc/impl/client.ipp"
+    #include "irc/impl/loop.ipp"
 #endif
 
 #endif // IRC_CLIENT_HPP

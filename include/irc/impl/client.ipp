@@ -6,10 +6,16 @@
     Created:     2014/01/14
     Licence:     Boost Software License, Version 1.0
 */
-#ifndef IRC_IMPL_CLIENT_HPP
-#define IRC_IMPL_CLIENT_HPP
+#ifndef IRC_IMPL_CLIENT_IPP
+#define IRC_IMPL_CLIENT_IPP
 
 namespace irc {
+
+/*static*/ bool is_channel( const std::string &target )
+{
+    return( !target.empty() && ((target[0]=='#') || (target[0]=='&') ||
+                                (target[0]=='+') || (target[0]=='!')) );
+}
 
 client::ptr client::create( io_service &io_service )
 {
@@ -39,8 +45,8 @@ void client::connect( const std::string &hostname,
     m_realname = realname;
 
     boost::asio::async_connect( m_socket, endpoint_iter,
-                                std::bind( &client::handle_connect,
-                                            shared_from_this(), ph::_1 ) );
+                                std::bind( &client::loop,
+                                            shared_from_this(), ph::_1, 0 ) );
 }
 
 void client::disconnect()
@@ -52,8 +58,7 @@ void client::disconnect()
     }
 
     m_connected = false;
-    if( m_on_disconnected )
-        m_on_disconnected();
+    m_on_disconnected();
 
     m_service.post([this]() { m_socket.close(); });
 }
@@ -136,7 +141,7 @@ void client::join( const std::string &channel )
     {
         m_lasterror = error_code::invalid_request;
         m_service.post( std::bind( &client::loop, shared_from_this(),
-                                       system_error_code(), 0 ) );
+                                    system_error_code(), 0 ) );
         return;
     }
     send_raw("JOIN "+ channel);
@@ -149,7 +154,7 @@ void client::kick( const std::string &nickname, const std::string &channel,
     {
         m_lasterror = error_code::invalid_request;
         m_service.post( std::bind( &client::loop, shared_from_this(),
-                                       system_error_code(), 0 ) );
+                                    system_error_code(), 0 ) );
         return;
     }
 
@@ -170,23 +175,24 @@ void client::names( const std::string &channel )
     {
         m_lasterror = error_code::invalid_request;
         m_service.post( std::bind( &client::loop, shared_from_this(),
-                                       system_error_code(), 0 ) );
+                                    system_error_code(), 0 ) );
         return;
     }
 
     send_raw("NAMES "+ channel);
 }
 
-std::string client::nickname_from( const std::string &hostmask ) const
+void client::nick( const std::string &newnick )
 {
-    if( hostmask.empty() )
-        return std::string();
+    if( newnick.empty() )
+    {
+        m_lasterror = error_code::invalid_request;
+        m_service.post( std::bind( &client::loop, shared_from_this(),
+                                    system_error_code(), 0 ) );
+        return;
+    }
 
-    std::size_t found = hostmask.find('!');
-    if( found != std::string::npos )
-        return hostmask.substr( 0, found );
-
-    return std::string();
+    send_raw("NICK "+ newnick);
 }
 
 void client::notice( const std::string &destination, const std::string &message )
@@ -215,13 +221,18 @@ void client::part( const std::string &channel )
     send_raw("PART "+ channel);
 }
 
+void client::pong( const std::string &destination )
+{
+    send_raw("PONG "+ destination);
+}
+
 void client::privmsg( const std::string &destination, const std::string &message )
 {
     if( destination.empty() || message.empty() )
     {
         m_lasterror = error_code::invalid_request;
         m_service.post( std::bind( &client::loop, shared_from_this(),
-                                       system_error_code(), 0 ) );
+                                    system_error_code(), 0 ) );
         return;
     }
 
@@ -232,6 +243,30 @@ void client::quit( const std::string &reason )
 {
     std::string cmd_str = reason.empty() ? "QUIT" : "QUIT :"+ reason;
     send_raw( cmd_str );
+}
+
+void client::set_mode( const std::string &mode )
+{
+    if( !mode.empty() )
+        send_raw("MODE "+ m_nickname +' '+ mode);
+    else
+        send_raw("MODE "+ m_nickname);
+}
+
+void client::set_channel_mode( const std::string &channel, const std::string &mode )
+{
+    if( channel.empty() )
+    {
+        m_lasterror = error_code::invalid_request;
+        m_service.post( std::bind( &client::loop, shared_from_this(),
+                                    system_error_code(), 0 ) );
+        return;
+    }
+
+    if( !mode.empty() )
+        send_raw("MODE "+ m_nickname +' '+ mode);
+    else
+        send_raw("MODE "+ m_nickname);
 }
 
 void client::topic( const std::string &channel, const std::string &topic )
@@ -261,4 +296,4 @@ std::string client::version() const
 
 } // namespace irc
 
-#endif // IRC_IMPL_CLIENT_HPP
+#endif // IRC_IMPL_CLIENT_IPP
