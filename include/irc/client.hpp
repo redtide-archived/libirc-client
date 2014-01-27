@@ -9,41 +9,31 @@
 #ifndef IRC_CLIENT_HPP
 #define IRC_CLIENT_HPP
 
-#include <functional>
-#include <memory>
-#include <vector>
-
-#include <boost/algorithm/string.hpp>
-#include <boost/asio.hpp>
-#include <boost/format.hpp>
-#include <boost/fusion/include/vector.hpp>
-#include <boost/system/error_code.hpp>
-
 #include "irc/command.hpp"
-#include "irc/ctcp/command.hpp"
 #include "irc/error.hpp"
 #include "irc/message.hpp"
 #include "irc/types.hpp"
-#include "irc/impl/parser.hpp"
-#include "irc/impl/ctcp/parser.hpp"
 
-namespace ph  = std::placeholders;
-namespace fsn = boost::fusion;
+#include <boost/asio.hpp>
+#include <boost/system/error_code.hpp>
+
+#include <memory>
 
 /** Main namespace */
 namespace irc {
 
-typedef boost::system::error_code      system_error_code;
-typedef boost::asio::io_service        io_service;
-typedef boost::asio::ip::tcp::resolver resolver;
-typedef boost::asio::ip::tcp::socket   socket;
-typedef boost::asio::streambuf         streambuf;
-typedef std::string::const_iterator    iterator_type;
-typedef message_parser<iterator_type>  message_parser_type;
-
-using ctcp_message_type = fsn::vector<ctcp::command, std::string>;
+using system_error_code = boost::system::error_code;
+using io_service        = boost::asio::io_service;
+using resolver          = boost::asio::ip::tcp::resolver;
+using socket            = boost::asio::ip::tcp::socket;
+using streambuf         = boost::asio::streambuf;
 
 const int max_params = 15; /**< RFC 2812: maximum parameters allowed */
+/**
+    Returns the irc client version.
+    @return The irc client version.
+*/
+static std::string version();
 /**
     Returns if the specified mask represents a channel.
     @param mask The channel mask to check.
@@ -195,11 +185,10 @@ public:
                    the current topic is returned.
 */
     void topic( const std::string &channel, const std::string &topic = std::string() );
-/**
-    Returns the irc client version.
-    @return The irc client version.
-*/
-    std::string version() const;
+
+    std::string nickname() const { return m_nickname; }
+    std::string username() const { return m_username; }
+    std::string realname() const { return m_realname; }
 /**
     Signal fired when an user sent a public message to a channel.
     @param func The function to call back.
@@ -344,6 +333,22 @@ public:
     template<typename Callback>
     signals::connection connect_on_disconnected( Callback&& func )
     { return m_on_disconnected.connect( std::forward<Callback>(func) ); }
+/**
+    Signal fired when recieving a CTCP request.
+    @param func The function to call back.
+    @return The connection object to disconnect from the signal.
+*/
+    template<typename Callback>
+    signals::connection connect_on_ctcp_request( Callback&& func )
+    { return m_on_ctcp_req.connect( std::forward<Callback>(func) ); }
+/**
+    Signal fired when recieving a CTCP reply.
+    @param func The function to call back.
+    @return The connection object to disconnect from the signal.
+*/
+    template<typename Callback>
+    signals::connection connect_on_ctcp_reply( Callback&& func )
+    { return m_on_ctcp_rep.connect( std::forward<Callback>(func) ); }
 
 private:
     explicit client( io_service &io_service )
@@ -359,10 +364,9 @@ private:
     client() = delete;
 
     void loop( const system_error_code &ec, size_t /*bytes*/ );
-    bool parse( const std::string &message );
+    bool parse( const std::string &raw_msg, message &msg );
 
-    void handle_ctcp( ctcp_message_type ctcp_msg );
-    void handle_message();
+    void handle_message( message &msg );
     void handle_read();
 
     io_service &m_service;
@@ -374,10 +378,6 @@ private:
     streambuf   m_buf_read,
                 m_buf_write;
     error_code  m_lasterror;
-
-    message     m_message;
-
-    message_parser_type m_parser;
 
     sig_message m_on_chanmsg,
                 m_on_channtc,

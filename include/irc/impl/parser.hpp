@@ -15,8 +15,8 @@
 
 #include "irc/command.hpp"
 #include "irc/impl/command.hpp"
-#include "irc/prefix.hpp"
 #include "irc/message.hpp"
+#include "irc/prefix.hpp"
 #include "irc/types.hpp"
 
 #include <boost/fusion/include/adapt_struct.hpp>
@@ -36,9 +36,9 @@ BOOST_FUSION_ADAPT_STRUCT
 BOOST_FUSION_ADAPT_STRUCT
 (
     irc::message,
-    (irc::prefix,               prefix)
-    (irc::command,              command)
-    (std::vector<std::string>,  params)
+    (irc::prefix,              prefix)
+    (irc::command,             command)
+    (std::vector<std::string>, params)
 )
 namespace irc {
 namespace qi  = boost::spirit::qi;
@@ -96,21 +96,19 @@ struct message_parser : qi::grammar<Iterator, message(), qi::space_type>
         ("PART",   command::part)   ("PRIVMSG", command::privmsg)
         ("INVITE", command::invite);
 
-        cmd     %= verbose_cmd | int_[_val = phx::bind( to_command, _1 )];
-        to_end  %= lit(':') >> *~char_("\r");
-        word    %= +~char_(" \r");
-        params  %= +( to_end | word );
-        msg     %= -pfx >> cmd >> params;
+        cmd        %= verbose_cmd | int_[_val = phx::bind( to_command, _1 )];
+        last_param %= lit(':') >> *~char_("\r");
+        mid_param  %= +~char_(" \r");
+        msg        %= -pfx >> cmd >> +( last_param | mid_param );
     }
 
 private:
-    qi::symbols<char, command>      verbose_cmd;
-    rule<command>                   cmd;
-    rule_ss<prefix>                 pfx;
-    rule_ss<std::string>            to_end;
-    rule_ss<std::string>            word;
-    rule<std::vector<std::string>>  params;
-    rule<message>                   msg;
+    qi::symbols<char, command> verbose_cmd;
+    rule<command>              cmd;
+    rule_ss<prefix>            pfx;
+    rule_ss<std::string>       last_param;
+    rule_ss<std::string>       mid_param;
+    rule<message>              msg;
 };
 
 } // namespace irc

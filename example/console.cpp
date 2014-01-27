@@ -38,6 +38,8 @@ int main( int argc, char **argv )
         c->connect_on_channel_message( &on_chan_message );
         c->connect_on_channel_mode( &on_chan_mode );
         c->connect_on_channel_notice( &on_chan_notice );
+        c->connect_on_ctcp_request(
+            std::bind(&on_ctcp_request, c, ph::_1, ph::_2, ph::_3) );
         c->connect_on_invite( &on_invite );
         c->connect_on_join( &on_join );
         c->connect_on_kick( &on_kick );

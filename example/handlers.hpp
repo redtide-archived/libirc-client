@@ -1,8 +1,13 @@
 #include <irc/client.hpp>
 #include <irc/command.hpp>
+#include <irc/ctcp/command.hpp>
 
-#include <type_traits>
+#include <ctime>
+#include <cstdio>
 #include <iostream>
+#include <type_traits>
+
+namespace ctcp = irc::ctcp;
 
 template <typename Enumeration>
 auto as_integer(Enumeration const value)
@@ -131,4 +136,63 @@ void on_topic( const irc::message &msg )
 void on_unknown( const irc::message &msg )
 {
     ;
+}
+void on_ctcp_request( irc::client::ptr c, const irc::message &msg,
+                      ctcp::command ctcp_cmd, const std::string &request )
+{
+    std::string ctcp_cmd_str;
+
+    if( ctcp_cmd == ctcp::command::action )
+    {
+        std::cout << '*' << msg.prefix.nickname << "* " << request << '\n';
+        return;
+    }
+    else if( ctcp_cmd == ctcp::command::clientinfo )
+    {
+        ctcp_cmd_str = "CLIENTINFO";
+    }
+    else if( ctcp_cmd == ctcp::command::dcc )
+    {
+        ctcp_cmd_str = "DCC";
+        ;// m_on_dcc_req(  );
+    }
+    else if( ctcp_cmd == ctcp::command::finger )
+    {
+        ctcp_cmd_str = "FINGER";
+        std::string finger = "FINGER: Pretty useless, obsolete CTCP request.";
+        c->ctcp_reply( msg.prefix.nickname, finger );
+    }
+    else if( ctcp_cmd == ctcp::command::ping )
+    {
+        ctcp_cmd_str = "PING "+ request;
+        c->ctcp_reply( msg.prefix.nickname, ctcp_cmd_str );
+    }
+    else if( ctcp_cmd == ctcp::command::source )
+    {
+        ctcp_cmd_str = "SOURCE";
+        c->ctcp_reply( msg.prefix.nickname, "SOURCE: git@github.com:irclib/client.git" );
+    }
+    else if( ctcp_cmd == ctcp::command::time )
+    {
+        ctcp_cmd_str = "TIME";
+        std::time_t time_now;
+        std::time (&time_now);
+        std::string time_reply = "TIME ";
+        time_reply += std::ctime( &time_now );
+        time_reply = time_reply.substr( 0, time_reply.length() -1 );
+        c->ctcp_reply( msg.prefix.nickname, time_reply );
+    }
+    else if( ctcp_cmd == ctcp::command::version )
+    {
+        ctcp_cmd_str = "VERSION";
+        c->ctcp_reply( msg.prefix.nickname, irc::version() );
+    }
+    else if( ctcp_cmd == ctcp::command::userinfo )
+    {
+        ctcp_cmd_str = "USERINFO";
+        c->ctcp_reply( msg.prefix.nickname, "USERINFO: Just an irc::client example." );
+    }
+
+    std::cout << "CTCP "<< ctcp_cmd_str <<" request from "
+              << msg.prefix.nickname << " replied.\n";
 }

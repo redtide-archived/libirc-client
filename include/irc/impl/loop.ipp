@@ -9,8 +9,22 @@
 #ifndef IRC_IMPL_LOOP_IPP
 #define IRC_IMPL_LOOP_IPP
 
-namespace fsn = boost::fusion;
+#include "irc/ctcp/command.hpp"
+#include "irc/impl/parser.hpp"
+#include "irc/impl/ctcp/parser.hpp"
+
+#include <boost/algorithm/string.hpp>
+#include <boost/format.hpp>
+#include <boost/fusion/include/vector.hpp>
+
+#include <functional>
+
 namespace irc {
+namespace fsn = boost::fusion;
+namespace ph  = std::placeholders;
+
+using msg_parser_type   = message_parser<std::string::const_iterator>;
+using ctcp_message_type = fsn::vector<ctcp::command, std::string>;
 
 void client::loop( const system_error_code &ec, size_t /*bytes*/ )
 {
@@ -52,144 +66,147 @@ void client::loop( const system_error_code &ec, size_t /*bytes*/ )
         disconnect();
     }}}
 }
-
-void client::handle_ctcp( ctcp_message_type ctcp_msg )
+/*
+void client::handle_ctcp( message &msg, ctcp_message_type ctcp_msg )
 {
-    ctcp::command ctcp_cmd  = fsn::at_c<0>(ctcp_msg);
-    std::string   ctcp_args = fsn::at_c<1>(ctcp_msg);
-
-    if( m_message.command == command::privmsg ) // request
+    if( ctcp_cmd == ctcp::command::action )
     {
-        if( ctcp_cmd == ctcp::command::action )
-        {
-;//          m_on_action(ctcp_args);
-        }
-        else if( ctcp_cmd == ctcp::command::dcc )
-        {
-;//          m_on_dcc_req(ctcp_args);
-        }
-        else if( ctcp_cmd == ctcp::command::finger )
-        {
-            ;
-        }
-        else if( ctcp_cmd == ctcp::command::ping )
-        {
-            std::string ping_reply = "PING "+ ctcp_args;
-            ctcp_reply( m_message.prefix.nickname, ping_reply );
-        }
-        else if( ctcp_cmd == ctcp::command::time )
-        {
-            ;
-        }
-        else if( ctcp_cmd == ctcp::command::version )
-        {
-;//         m_on_version();
-//          ctcp_reply( m_message.prefix.nickname, version() );
-        }
+        m_on_action(ctcp_args);
     }
-    else // command::notice, reply
+    else if( ctcp_cmd == ctcp::command::dcc )
     {
-        ; // TODO: handle CTCP replies
+;//          m_on_dcc_req(ctcp_args);
+    }
+    else if( ctcp_cmd == ctcp::command::finger )
+    {
+        ;
+    }
+    else if( ctcp_cmd == ctcp::command::ping )
+    {
+        std::string ping_reply = "PING "+ ctcp_args;
+        ctcp_reply( msg.prefix.nickname, ping_reply );
+    }
+    else if( ctcp_cmd == ctcp::command::time )
+    {
+        ;
+    }
+    else if( ctcp_cmd == ctcp::command::version )
+    {
+;//         m_on_version();
+//          ctcp_reply( msg.prefix.nickname, version() );
     }
 }
-
-void client::handle_message()
+*/
+void client::handle_message( message &msg )
 {
-    if((m_message.command == command::privmsg ||
-        m_message.command == command::notice) && m_message.params.size() > 1)
+    if( (msg.params.size() > 1) &&
+        (msg.command == command::privmsg ||
+         msg.command == command::notice) )
     {
-        std::string param = m_message.params.back();
-        qi::space_type space;
+        std::string                               param = msg.params.back();
+        std::string::const_iterator               first = param.begin();
+        std::string::const_iterator               last  = param.end();
         ctcp::parser<std::string::const_iterator> ctcp_parser;
+        qi::space_type                            space;
         fsn::vector<ctcp::command, std::string>   ctcp_msg;
-        std::string::const_iterator first = param.begin();
-        std::string::const_iterator last  = param.end();
+
         qi::phrase_parse( first, last, ctcp_parser, space, ctcp_msg );
 
         ctcp::command ctcp_cmd = fsn::at_c<0>(ctcp_msg);
+
         if( ctcp_cmd != ctcp::command::none )
         {
-            m_service.dispatch( std::bind( &client::handle_ctcp,
-                                            shared_from_this(), ctcp_msg ) );
+            std::string ctcp_args = fsn::at_c<1>(ctcp_msg);
+            if( msg.command == command::privmsg ) // request
+            {
+                m_on_ctcp_req( msg, ctcp_cmd, ctcp_args );
+            }
+            else if( msg.command == command::notice ) // reply
+            {
+                m_on_ctcp_rep( msg, ctcp_cmd, ctcp_args );
+            }
             return;
         }
-        if( m_message.command == command::privmsg )
+        if( msg.command == command::privmsg )
         {
-            if( m_message.params[0].find(m_nickname) != std::string::npos )
-                m_on_privmsg( m_message );
+            if( msg.params[0] == m_nickname )
+                m_on_privmsg( msg );
             else
-                m_on_chanmsg( m_message );
+                m_on_chanmsg( msg );
         }
         else
         {
-            if( m_message.params[0].find(m_nickname) != std::string::npos )
-                m_on_notice( m_message );
+            if( msg.params[0] == m_nickname )
+                m_on_notice( msg );
             else
-                m_on_channtc( m_message );
+                m_on_channtc( msg );
         }
     }
-    else if( m_message.command <= command::err_max )
+    else if( msg.command <= command::err_max )
     {
-        m_on_numeric( m_message );
+        m_on_numeric( msg );
     }
-    else if( m_message.command <= command::invite )
+    else if( msg.command <= command::invite )
     {
-        m_on_invite( m_message );
+        m_on_invite( msg );
     }
-    else if( m_message.command == command::join )
+    else if( msg.command == command::join )
     {
-        m_on_join( m_message );
+        m_on_join( msg );
     }
-    else if( m_message.command == command::kick )
+    else if( msg.command == command::kick )
     {
-        m_on_kick( m_message );
+        m_on_kick( msg );
     }
-    else if( m_message.command == command::nick )
+    else if( msg.command == command::nick )
     {
-        m_on_nick( m_message );
+        if( msg.params.size() > 0 && msg.prefix.nickname == m_nickname )
+            m_nickname = msg.params[0]; // Update our nickname.
+
+        m_on_nick( msg );
     }
-    else if( m_message.command == command::part )
+    else if( msg.command == command::part )
     {
-        m_on_part( m_message );
+        m_on_part( msg );
     }
-    else if( m_message.command == command::mode )
+    else if( msg.command == command::mode )
     {
-        if( is_channel(m_message.params[0]) )
-            m_on_chanmode( m_message );
+        if( msg.params.size() > 0 && msg.params[0] == m_nickname )
+            m_on_usermode( msg );
         else
-            m_on_usermode( m_message );
+            m_on_chanmode( msg );
     }
-    else if( m_message.command == command::ping )
+    else if( msg.command == command::ping )
     {
-        m_on_ping( m_message );
+        m_on_ping( msg );
     }
-    else if( m_message.command == command::quit )
+    else if( msg.command == command::quit )
     {
-        m_on_quit( m_message );
+        m_on_quit( msg );
     }
-    else if( m_message.command == command::topic )
+    else if( msg.command == command::topic )
     {
-        m_on_topic( m_message );
+        m_on_topic( msg );
     }
     else // Unknown command
     {
-        m_on_unknown( m_message );
+        m_on_unknown( msg );
     }
 }
 
 void client::handle_read()
 {
     std::istream in( &m_buf_read );
-    std::string  message;
-    std::getline( in, message );
+    std::string  raw_msg;
+    std::getline( in, raw_msg );
 
-    if( !message.empty() )
+    if( !raw_msg.empty() )
     {
-        m_message = irc::message();
-        if( parse( message ) )
+        irc::message msg;
+        if( parse( raw_msg, msg ) )
         {
             m_service.dispatch( std::bind( &client::handle_message,
-                                            shared_from_this() ) );
+                                            shared_from_this(), msg ) );
         }
     }
 
@@ -197,18 +214,20 @@ void client::handle_read()
                                 system_error_code(), 0 ) );
 }
 
-bool client::parse( const std::string &message )
+bool client::parse( const std::string &raw_msg, message &msg )
 {
-    if( message.empty() )
+    if( raw_msg.empty() )
         return false;
 
-    qi::space_type space;
-    std::string::const_iterator first = message.begin();
-    std::string::const_iterator last  = message.end();
-    bool r = qi::phrase_parse( first, last, m_parser, space, m_message );
+    std::string::const_iterator first = raw_msg.begin();
+    std::string::const_iterator last  = raw_msg.end();
+    msg_parser_type             msg_parser;
+    qi::space_type              space;
+
+    bool r = qi::phrase_parse( first, last, msg_parser, space, msg );
 
 #ifdef IRC_DEBUG
-    std::cout << message << '\n';
+    std::cout << raw_msg << '\n';
 #endif
     if( r && first == last )
         return true;

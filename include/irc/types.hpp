@@ -9,18 +9,20 @@
 #ifndef IRC_CLIENT_TYPES_HPP
 #define IRC_CLIENT_TYPES_HPP
 
+#include "irc/ctcp/command.hpp"
 #include "irc/message.hpp"
 
 #include <boost/signals2/signal.hpp>
 
 namespace irc {
 
-class  message;
+//class message;
 
 namespace signals = boost::signals2;
 using sig_message = signals::signal<void(const message&)>;
 using sig_void    = signals::signal<void()>;
-using sig_ctcp    = signals::signal<void(const std::string&, const std::string&)>;
+using sig_ctcp    = signals::signal<void(const message&, ctcp::command,
+                                         const std::string&)>;
 
 } // namespace irc
 

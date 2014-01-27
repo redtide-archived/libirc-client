@@ -10,11 +10,16 @@
 #define IRC_IMPL_CLIENT_IPP
 
 namespace irc {
+namespace ph = std::placeholders;
 
 /*static*/ bool is_channel( const std::string &target )
 {
     return( !target.empty() && ((target[0]=='#') || (target[0]=='&') ||
                                 (target[0]=='+') || (target[0]=='!')) );
+}
+/*static*/ std::string version()
+{
+    return "VERSION irc::client by Andrea Zanellato v0.1";
 }
 
 client::ptr client::create( io_service &io_service )
@@ -287,11 +292,6 @@ void client::topic( const std::string &channel, const std::string &topic )
         cmd_str = "TOPIC "+ channel +" :"+ topic;
 
     send_raw( cmd_str );
-}
-
-std::string client::version() const
-{
-    return "VERSION irc::client by Andrea Zanellato v0.1";
 }
 
 } // namespace irc
