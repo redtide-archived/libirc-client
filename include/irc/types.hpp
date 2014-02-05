@@ -10,19 +10,24 @@
 #define IRC_CLIENT_TYPES_HPP
 
 #include "irc/ctcp/command.hpp"
+#include "irc/ctcp/dcc/session.hpp"
 #include "irc/message.hpp"
 
+#include <boost/asio.hpp>
 #include <boost/signals2/signal.hpp>
-
-namespace irc {
-
-//class message;
+#include <boost/system/error_code.hpp>
 
 namespace signals = boost::signals2;
-using sig_message = signals::signal<void(const message&)>;
-using sig_void    = signals::signal<void()>;
-using sig_ctcp    = signals::signal<void(const message&, ctcp::command,
-                                         const std::string&)>;
+namespace irc {
+
+using sig_message= signals::signal<void(const message&)>;
+using sig_void   = signals::signal<void()>;
+using sig_ctcp   = signals::signal<void(const message&,
+                                        ctcp::command,
+                                        const std::string&)>;
+using sig_dcc_req= signals::signal<void(const std::string&, const std::string&,
+                                        ctcp::dcc::command, const std::string&,
+                                        long)>;
 
 } // namespace irc
 

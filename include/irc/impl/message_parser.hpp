@@ -1,5 +1,5 @@
 /*
-    Name:        irc/impl/parser.hpp
+    Name:        irc/impl/message_parser.hpp
     Purpose:     IRC message parser.
     Author:      Joseph Dobson
     Modified by: Andrea Zanellato
@@ -40,9 +40,9 @@ BOOST_FUSION_ADAPT_STRUCT
     (irc::command,             command)
     (std::vector<std::string>, params)
 )
-namespace irc {
 namespace qi  = boost::spirit::qi;
 namespace phx = boost::phoenix;
+namespace irc {
 
 template <typename Iterator>
 struct message_parser : qi::grammar<Iterator, message(), qi::space_type>

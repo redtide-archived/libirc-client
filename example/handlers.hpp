@@ -1,10 +1,14 @@
 #include <irc/client.hpp>
 #include <irc/command.hpp>
 #include <irc/ctcp/command.hpp>
+#include <irc/ctcp/dcc/command.hpp>
+
+#include <boost/asio.hpp>
 
 #include <ctime>
 #include <cstdio>
 #include <iostream>
+#include <thread>
 #include <type_traits>
 
 namespace ctcp = irc::ctcp;
@@ -22,15 +26,7 @@ void on_connected()
 void on_disconnect()
 {
     std::cout << "################### Disconnected ###################\n";
-}/*
-void on_action( const irc::message &msg )
-{
-    std::string user = msg.prefix.nickname;
-    std::string chan = msg.params[0];
-//  std::string what = msg.params[1];
-
-//  std::cout << chan << " * " << user << " " << what << '\n';
-}*/
+}
 void on_chan_notice( const irc::message &msg )
 {
     if( !msg.prefix.nickname.empty() ) // from user
@@ -60,6 +56,13 @@ void on_chan_mode( const irc::message &msg )
 {
     std::cout << msg.params[0] <<": "<< msg.prefix.nickname
               <<" has set mode "<< msg.params[1] <<" "<< msg.params[2] <<'\n';
+}
+void on_dcc_req(const std::string &address, const std::string &port,
+                irc::ctcp::dcc::command type, const std::string &argument, long size )
+{
+    boost::asio::io_service ios;
+    ctcp::dcc::session::ptr dcc_ = ctcp::dcc::session::make_shared( ios );
+    dcc_->connect( address, port, type, argument, size );
 }
 void on_user_mode( const irc::message &msg )
 {

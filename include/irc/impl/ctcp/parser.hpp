@@ -25,7 +25,9 @@ namespace irc {
 namespace ctcp {
 
 template<typename Iterator>
-struct parser : qi::grammar<Iterator, fsn::vector<ctcp::command, std::string>(), qi::space_type>
+struct parser : qi::grammar<Iterator,
+                            fsn::vector<ctcp::command, std::string>(),
+                            qi::space_type>
 {
     template<typename Val>
     using rule = qi::rule<Iterator, Val(), qi::space_type>;

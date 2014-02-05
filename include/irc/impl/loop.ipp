@@ -10,7 +10,7 @@
 #define IRC_IMPL_LOOP_IPP
 
 #include "irc/ctcp/command.hpp"
-#include "irc/impl/parser.hpp"
+#include "irc/impl/message_parser.hpp"
 #include "irc/impl/ctcp/parser.hpp"
 
 #include <boost/algorithm/string.hpp>
@@ -19,84 +19,58 @@
 
 #include <functional>
 
-namespace irc {
 namespace fsn = boost::fusion;
 namespace ph  = std::placeholders;
+namespace qi  = boost::spirit::qi;
+namespace irc {
 
 using msg_parser_type   = message_parser<std::string::const_iterator>;
 using ctcp_message_type = fsn::vector<ctcp::command, std::string>;
 
-void client::loop( const system_error_code &ec, size_t /*bytes*/ )
+void client::loop( const sys::error_code &ec, size_t bytes )
 {
-    BOOST_ASIO_CORO_REENTER( this ) { for( ;; ) {
-    if( !ec )
+    if( !ec ) BOOST_ASIO_CORO_REENTER( this )
     {
-        if( !m_connected )
+        for( ;; )
         {
-            m_connected = true;
-            m_on_connected();
+            if( !m_connected )
+            {
+                m_connected = true;
+                m_on_connected();
 
-            std::ostream out( &m_buf_write );
-            std::string
-            nick_cmd = boost::str( boost::format("NICK %1%\r\n") % m_nickname ),
-            user_cmd = boost::str( boost::format
-                ("USER %1% unknown unknown :%2%\r\n") % m_username % m_realname );
+                std::ostream out( &m_buf_write );
+                std::string
+                nick_cmd = boost::str( boost::format("NICK %1%\r\n") % m_nickname ),
+                user_cmd = boost::str( boost::format
+                    ("USER %1% unknown unknown :%2%\r\n") % m_username % m_realname );
 
-            out << nick_cmd << user_cmd;
-        }
-        BOOST_ASIO_CORO_YIELD
-        {
-            async_write( m_socket, m_buf_write,
-                         std::bind( &client::loop, shared_from_this(),
-                                     ph::_1, ph::_2 ) );
-        }
-        BOOST_ASIO_CORO_YIELD
-        {
-            async_read_until( m_socket, m_buf_read, "\r\n",
-                              std::bind( &client::loop, shared_from_this(),
-                                          ph::_1, ph::_2 ) );
-        }
-        BOOST_ASIO_CORO_YIELD
-        {
-            m_service.post( std::bind( &client::handle_read, shared_from_this() ) );
+                out << nick_cmd << user_cmd;
+            }
+            BOOST_ASIO_CORO_YIELD
+            {
+                async_write( m_socket, m_buf_write,
+                             std::bind( &client::loop, shared_from_this(),
+                                        ph::_1, ph::_2 ) );
+            }
+            BOOST_ASIO_CORO_YIELD
+            {
+                async_read_until( m_socket, m_buf_read, "\r\n",
+                                std::bind( &client::loop, shared_from_this(),
+                                            ph::_1, ph::_2 ) );
+            }
+            BOOST_ASIO_CORO_YIELD
+            {
+                m_io_service.post( std::bind( &client::handle_read,
+                                                shared_from_this(), ec, bytes ) );
+            }
         }
     }
-    else
+    else if( m_connected )
     {
         disconnect();
-    }}}
-}
-/*
-void client::handle_ctcp( message &msg, ctcp_message_type ctcp_msg )
-{
-    if( ctcp_cmd == ctcp::command::action )
-    {
-        m_on_action(ctcp_args);
-    }
-    else if( ctcp_cmd == ctcp::command::dcc )
-    {
-;//          m_on_dcc_req(ctcp_args);
-    }
-    else if( ctcp_cmd == ctcp::command::finger )
-    {
-        ;
-    }
-    else if( ctcp_cmd == ctcp::command::ping )
-    {
-        std::string ping_reply = "PING "+ ctcp_args;
-        ctcp_reply( msg.prefix.nickname, ping_reply );
-    }
-    else if( ctcp_cmd == ctcp::command::time )
-    {
-        ;
-    }
-    else if( ctcp_cmd == ctcp::command::version )
-    {
-;//         m_on_version();
-//          ctcp_reply( msg.prefix.nickname, version() );
     }
 }
-*/
+
 void client::handle_message( message &msg )
 {
     if( (msg.params.size() > 1) &&
@@ -117,7 +91,11 @@ void client::handle_message( message &msg )
         if( ctcp_cmd != ctcp::command::none )
         {
             std::string ctcp_args = fsn::at_c<1>(ctcp_msg);
-            if( msg.command == command::privmsg ) // request
+            if( ctcp_cmd == ctcp::command::dcc )
+            {
+                dcc_request( msg.prefix.nickname, ctcp_args );
+            }
+            else if( msg.command == command::privmsg ) // request
             {
                 m_on_ctcp_req( msg, ctcp_cmd, ctcp_args );
             }
@@ -146,7 +124,7 @@ void client::handle_message( message &msg )
     {
         m_on_numeric( msg );
     }
-    else if( msg.command <= command::invite )
+    else if( msg.command == command::invite )
     {
         m_on_invite( msg );
     }
@@ -194,8 +172,11 @@ void client::handle_message( message &msg )
     }
 }
 
-void client::handle_read()
+void client::handle_read( const sys::error_code &ec, size_t bytes )
 {
+    if( ec )
+        return;
+
     std::istream in( &m_buf_read );
     std::string  raw_msg;
     std::getline( in, raw_msg );
@@ -205,13 +186,13 @@ void client::handle_read()
         irc::message msg;
         if( parse( raw_msg, msg ) )
         {
-            m_service.dispatch( std::bind( &client::handle_message,
-                                            shared_from_this(), msg ) );
+            m_io_service.dispatch( std::bind( &client::handle_message,
+                                                shared_from_this(), msg ) );
         }
     }
 
-    m_service.post( std::bind( &client::loop, shared_from_this(),
-                                system_error_code(), 0 ) );
+    m_io_service.post( std::bind( &client::loop, shared_from_this(),
+                                    sys::error_code(), 0 ) );
 }
 
 bool client::parse( const std::string &raw_msg, message &msg )

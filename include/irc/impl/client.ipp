@@ -9,8 +9,15 @@
 #ifndef IRC_IMPL_CLIENT_IPP
 #define IRC_IMPL_CLIENT_IPP
 
-namespace irc {
+#include "irc/ctcp/dcc/session.hpp"
+#include "irc/impl/ctcp/dcc/parser.hpp"
+
+#include <functional>
+
 namespace ph = std::placeholders;
+namespace qi = boost::spirit::qi;
+namespace fsn= boost::fusion;
+namespace irc {
 
 /*static*/ bool is_channel( const std::string &target )
 {
@@ -22,7 +29,7 @@ namespace ph = std::placeholders;
     return "VERSION irc::client by Andrea Zanellato v0.1";
 }
 
-client::ptr client::create( io_service &io_service )
+client::ptr client::create( asio::io_service &io_service )
 {
     client::ptr new_client( new client( io_service ) );
     return new_client;
@@ -32,6 +39,15 @@ client::~client()
 {
     if( m_connected )
         disconnect();
+
+    m_nickname =
+    m_username =
+    m_realname = std::string{};
+
+    m_buf_read.consume( m_buf_read.size() );
+    m_buf_write.consume( m_buf_write.size() );
+
+    m_lasterror = error_code::success;
 }
 
 void client::connect( const std::string &hostname,
@@ -41,9 +57,9 @@ void client::connect( const std::string &hostname,
                       const std::string &realname,
                       const std::string &srv_pwrd )
 {
-    resolver           resolver( m_service );
-    resolver::query    query( hostname, port );
-    resolver::iterator endpoint_iter = resolver.resolve( query );
+    ip::tcp::resolver           resolver( m_io_service );
+    ip::tcp::resolver::query    query( hostname, port );
+    ip::tcp::resolver::iterator endpoint_iter = resolver.resolve( query );
 
     m_nickname = nickname;
     m_username = username;
@@ -65,7 +81,7 @@ void client::disconnect()
     m_connected = false;
     m_on_disconnected();
 
-    m_service.post([this]() { m_socket.close(); });
+    m_socket.close();
 }
 
 void client::send_raw( const std::string &cmd_str )
@@ -74,8 +90,8 @@ void client::send_raw( const std::string &cmd_str )
     {
         m_lasterror = error_code::invalid_request;
 
-        m_service.post( std::bind( &client::send_raw,
-                                    shared_from_this(), cmd_str ) );
+        m_io_service.post( std::bind( &client::send_raw,
+                                        shared_from_this(), cmd_str ) );
     }
     else
     {
@@ -85,8 +101,8 @@ void client::send_raw( const std::string &cmd_str )
         std::ostream out( &m_buf_write );
         out << cmd_str << "\r\n";
 
-        m_service.post( std::bind( &client::loop, shared_from_this(),
-                                    system_error_code(), 0 ) );
+        m_io_service.post( std::bind( &client::loop, shared_from_this(),
+                                        sys::error_code(), 0 ) );
     }
 }
 
@@ -95,8 +111,8 @@ void client::action( const std::string &destination, const std::string &message 
     if( destination.empty() || message.empty() )
     {
         m_lasterror = error_code::invalid_request;
-        m_service.post( std::bind( &client::loop, shared_from_this(),
-                                    system_error_code(), 0 ) );
+        m_io_service.post( std::bind( &client::loop, shared_from_this(),
+                                        sys::error_code(), 0 ) );
         return;
     }
 
@@ -108,8 +124,8 @@ void client::ctcp_request( const std::string &nickname, const std::string &reque
     if( nickname.empty() || request.empty() )
     {
         m_lasterror = error_code::invalid_request;
-        m_service.post( std::bind( &client::loop, shared_from_this(),
-                                    system_error_code(), 0 ) );
+        m_io_service.post( std::bind( &client::loop, shared_from_this(),
+                                        sys::error_code(), 0 ) );
         return;
     }
     send_raw("PRIVMSG "+ nickname +" :\x01"+ request +"\x01");
@@ -120,11 +136,48 @@ void client::ctcp_reply( const std::string &nickname, const std::string &reply )
     if( nickname.empty() || reply.empty() )
     {
         m_lasterror = error_code::invalid_request;
-        m_service.post( std::bind( &client::loop, shared_from_this(),
-                                    system_error_code(), 0 ) );
+        m_io_service.post( std::bind( &client::loop, shared_from_this(),
+                                        sys::error_code(), 0 ) );
         return;
     }
     send_raw("NOTICE "+ nickname +" :\x01"+ reply +"\x01");
+}
+
+void client::dcc_chat( const std::string &nickname )
+{
+    ctcp_request( nickname, "DCC CHAT chat 2001:470:c924:00c0:ffee:c0ff:eec0:ffee 12345");
+}
+
+void client::dcc_request( const std::string &nickname, const std::string &request )
+{
+    if( nickname.empty() || request.empty() )
+    {
+        m_lasterror = error_code::invalid_request;
+        m_io_service.post( std::bind( &client::loop, shared_from_this(),
+                                    sys::error_code(), 0 ) );
+        return;
+    }
+
+    using namespace ctcp;
+    using dcc_message =
+        fsn::vector<dcc::command, std::string, std::string, std::string, long>;
+
+    qi::space_type space;
+    dcc_message msg;
+    std::string::const_iterator first = request.begin();
+    std::string::const_iterator last  = request.end();
+    dcc::parser<std::string::const_iterator> dcc_parser;
+
+    if( !qi::phrase_parse( first, last, dcc_parser, space, msg ) )
+        return;
+
+    dcc::command type    = fsn::at_c<0>(msg);
+    std::string argument = fsn::at_c<1>(msg);
+    std::string address  = fsn::at_c<2>(msg);
+    std::string port     = fsn::at_c<3>(msg);
+    long        size     = fsn::at_c<4>(msg);
+
+    m_on_dcc_req( address, port, type, argument, size );
 }
 
 void client::invite( const std::string &nickname, const std::string &channel )
@@ -132,8 +185,8 @@ void client::invite( const std::string &nickname, const std::string &channel )
     if( nickname.empty() || channel.empty() )
     {
         m_lasterror = error_code::invalid_request;
-        m_service.post( std::bind( &client::loop, shared_from_this(),
-                                    system_error_code(), 0 ) );
+        m_io_service.post( std::bind( &client::loop, shared_from_this(),
+                                        sys::error_code(), 0 ) );
         return;
     }
 
@@ -145,8 +198,8 @@ void client::join( const std::string &channel )
     if( channel.empty() )
     {
         m_lasterror = error_code::invalid_request;
-        m_service.post( std::bind( &client::loop, shared_from_this(),
-                                    system_error_code(), 0 ) );
+        m_io_service.post( std::bind( &client::loop, shared_from_this(),
+                                        sys::error_code(), 0 ) );
         return;
     }
     send_raw("JOIN "+ channel);
@@ -158,8 +211,8 @@ void client::kick( const std::string &nickname, const std::string &channel,
     if( nickname.empty() || channel.empty() )
     {
         m_lasterror = error_code::invalid_request;
-        m_service.post( std::bind( &client::loop, shared_from_this(),
-                                    system_error_code(), 0 ) );
+        m_io_service.post( std::bind( &client::loop, shared_from_this(),
+                                        sys::error_code(), 0 ) );
         return;
     }
 
@@ -179,8 +232,8 @@ void client::names( const std::string &channel )
     if( channel.empty() )
     {
         m_lasterror = error_code::invalid_request;
-        m_service.post( std::bind( &client::loop, shared_from_this(),
-                                    system_error_code(), 0 ) );
+        m_io_service.post( std::bind( &client::loop, shared_from_this(),
+                                        sys::error_code(), 0 ) );
         return;
     }
 
@@ -192,8 +245,8 @@ void client::nick( const std::string &newnick )
     if( newnick.empty() )
     {
         m_lasterror = error_code::invalid_request;
-        m_service.post( std::bind( &client::loop, shared_from_this(),
-                                    system_error_code(), 0 ) );
+        m_io_service.post( std::bind( &client::loop, shared_from_this(),
+                                        sys::error_code(), 0 ) );
         return;
     }
 
@@ -205,8 +258,8 @@ void client::notice( const std::string &destination, const std::string &message 
     if( destination.empty() || message.empty() )
     {
         m_lasterror = error_code::invalid_request;
-        m_service.post( std::bind( &client::loop, shared_from_this(),
-                                       system_error_code(), 0 ) );
+        m_io_service.post( std::bind( &client::loop, shared_from_this(),
+                                        sys::error_code(), 0 ) );
         return;
     }
 
@@ -218,8 +271,8 @@ void client::part( const std::string &channel )
     if( channel.empty() )
     {
         m_lasterror = error_code::invalid_request;
-        m_service.post( std::bind( &client::loop, shared_from_this(),
-                                       system_error_code(), 0 ) );
+        m_io_service.post( std::bind( &client::loop, shared_from_this(),
+                                        sys::error_code(), 0 ) );
         return;
     }
 
@@ -236,8 +289,8 @@ void client::privmsg( const std::string &destination, const std::string &message
     if( destination.empty() || message.empty() )
     {
         m_lasterror = error_code::invalid_request;
-        m_service.post( std::bind( &client::loop, shared_from_this(),
-                                    system_error_code(), 0 ) );
+        m_io_service.post( std::bind( &client::loop, shared_from_this(),
+                                        sys::error_code(), 0 ) );
         return;
     }
 
@@ -263,8 +316,8 @@ void client::set_channel_mode( const std::string &channel, const std::string &mo
     if( channel.empty() )
     {
         m_lasterror = error_code::invalid_request;
-        m_service.post( std::bind( &client::loop, shared_from_this(),
-                                    system_error_code(), 0 ) );
+        m_io_service.post( std::bind( &client::loop, shared_from_this(),
+                                        sys::error_code(), 0 ) );
         return;
     }
 
@@ -279,8 +332,8 @@ void client::topic( const std::string &channel, const std::string &topic )
     if( channel.empty() )
     {
         m_lasterror = error_code::invalid_request;
-        m_service.post( std::bind( &client::loop, shared_from_this(),
-                                       system_error_code(), 0 ) );
+        m_io_service.post( std::bind( &client::loop, shared_from_this(),
+                                        sys::error_code(), 0 ) );
         return;
     }
 

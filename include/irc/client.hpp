@@ -14,19 +14,10 @@
 #include "irc/message.hpp"
 #include "irc/types.hpp"
 
-#include <boost/asio.hpp>
-#include <boost/system/error_code.hpp>
-
 #include <memory>
 
 /** Main namespace */
 namespace irc {
-
-using system_error_code = boost::system::error_code;
-using io_service        = boost::asio::io_service;
-using resolver          = boost::asio::ip::tcp::resolver;
-using socket            = boost::asio::ip::tcp::socket;
-using streambuf         = boost::asio::streambuf;
 
 const int max_params = 15; /**< RFC 2812: maximum parameters allowed */
 /**
@@ -58,7 +49,7 @@ public:
     @param io_service Reference to the ASIO io_service controller.
     @return Shared pointer to a new client object.
 */
-    static ptr create( io_service &io_service );
+    static ptr create( asio::io_service &io_service );
 
 /** Destructor. */
     ~client();
@@ -110,6 +101,14 @@ public:
     @param reply    The CTCP reply string.
 */
     void ctcp_reply( const std::string &nickname, const std::string &reply );
+
+    void dcc_chat( const std::string &nickname );
+/**
+    Sends a DCC request.
+    @param nickname The target nickname to send the request to.
+    @param request  The DCC request string.
+*/
+    void dcc_request( const std::string &nickname, const std::string &request );
 /**
     Sends an invitation to some user to join a channel.
     @param nickname The user to invite.
@@ -195,7 +194,7 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_channel_message( Callback&& func )
+    signals::connection on_channel_message( Callback&& func )
     { return m_on_chanmsg.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when an user sent a public notice to a channel.
@@ -203,7 +202,7 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_channel_notice( Callback&& func )
+    signals::connection on_channel_notice( Callback&& func )
     { return m_on_channtc.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when an user sets the channel modes.
@@ -211,15 +210,19 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_channel_mode( Callback&& func )
+    signals::connection on_channel_mode( Callback&& func )
     { return m_on_chanmode.connect( std::forward<Callback>(func) ); }
+
+    template<typename Callback>
+    signals::connection on_dcc_request( Callback&& func )
+    { return m_on_dcc_req.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when an user invited you to join a channel.
     @param func The function to call back.
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_invite( Callback&& func )
+    signals::connection on_invite( Callback&& func )
     { return m_on_invite.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when an user joined a channel.
@@ -227,7 +230,7 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_join( Callback&& func )
+    signals::connection on_join( Callback&& func )
     { return m_on_join.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when an user kick someone out of a channel.
@@ -235,7 +238,7 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_kick( Callback&& func )
+    signals::connection on_kick( Callback&& func )
     { return m_on_kick.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when an user changes his/her nick.
@@ -243,7 +246,7 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_nick( Callback&& func )
+    signals::connection on_nick( Callback&& func )
     { return m_on_nick.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when an user sent a private notice to someone else.
@@ -251,7 +254,7 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_private_notice( Callback&& func )
+    signals::connection on_private_notice( Callback&& func )
     { return m_on_notice.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when a numeric reply is sent from the IRC server.
@@ -259,7 +262,7 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_numeric_command( Callback&& func )
+    signals::connection on_numeric_command( Callback&& func )
     { return m_on_numeric.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when an user has left a channel.
@@ -267,7 +270,7 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_part( Callback&& func )
+    signals::connection on_part( Callback&& func )
     { return m_on_part.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when recieving a PING message from an IRC server.
@@ -275,7 +278,7 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_ping( Callback&& func )
+    signals::connection on_ping( Callback&& func )
     { return m_on_ping.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when an user sent a private message to someone else.
@@ -283,7 +286,7 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_private_message( Callback&& func )
+    signals::connection on_private_message( Callback&& func )
     { return m_on_privmsg.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when an user quits IRC.
@@ -291,7 +294,7 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_quit( Callback&& func )
+    signals::connection on_quit( Callback&& func )
     { return m_on_quit.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when an user changes a channel topic.
@@ -299,7 +302,7 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_topic( Callback&& func )
+    signals::connection on_topic( Callback&& func )
     { return m_on_topic.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when your user mode changes.
@@ -307,7 +310,7 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_user_mode( Callback&& func )
+    signals::connection on_user_mode( Callback&& func )
     { return m_on_usermode.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when an unsupported message command is sent.
@@ -315,7 +318,7 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_unknown_command( Callback&& func )
+    signals::connection on_unknown_command( Callback&& func )
     { return m_on_unknown.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when the connection was enstablished.
@@ -323,7 +326,7 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_connected( Callback&& func )
+    signals::connection on_connected( Callback&& func )
     { return m_on_connected.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when disconnected from the server.
@@ -331,7 +334,7 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_disconnected( Callback&& func )
+    signals::connection on_disconnected( Callback&& func )
     { return m_on_disconnected.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when recieving a CTCP request.
@@ -339,7 +342,7 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_ctcp_request( Callback&& func )
+    signals::connection on_ctcp_request( Callback&& func )
     { return m_on_ctcp_req.connect( std::forward<Callback>(func) ); }
 /**
     Signal fired when recieving a CTCP reply.
@@ -347,12 +350,12 @@ public:
     @return The connection object to disconnect from the signal.
 */
     template<typename Callback>
-    signals::connection connect_on_ctcp_reply( Callback&& func )
+    signals::connection on_ctcp_reply( Callback&& func )
     { return m_on_ctcp_rep.connect( std::forward<Callback>(func) ); }
 
 private:
-    explicit client( io_service &io_service )
-    :   m_service(io_service),
+    explicit client( asio::io_service &io_service )
+    :   m_io_service(io_service),
         m_socket(io_service),
         m_connected(false),
         m_lasterror(error_code::success)
@@ -363,20 +366,21 @@ private:
 
     client() = delete;
 
-    void loop( const system_error_code &ec, size_t /*bytes*/ );
+    void loop( const sys::error_code &ec, size_t bytes );
     bool parse( const std::string &raw_msg, message &msg );
 
     void handle_message( message &msg );
-    void handle_read();
+    void handle_read( const sys::error_code &ec, size_t bytes );
 
-    io_service &m_service;
-    socket      m_socket;
+    asio::io_service &m_io_service;
+    ip::tcp::socket m_socket;
+    asio::streambuf m_buf_read,
+                    m_buf_write;
+
     bool        m_connected;
     std::string m_nickname,
                 m_username,
                 m_realname;
-    streambuf   m_buf_read,
-                m_buf_write;
     error_code  m_lasterror;
 
     sig_message m_on_chanmsg,
@@ -402,7 +406,7 @@ private:
     sig_ctcp    m_on_ctcp_req,
                 m_on_ctcp_rep;
 
-//  sig_dcc_chat m_on_dcc_chat_req;
+    sig_dcc_req m_on_dcc_req;
 //  sig_dcc_send m_on_dcc_send_req;
 };
 
