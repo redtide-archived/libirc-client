@@ -1,7 +1,8 @@
 #include <irc/client.hpp>
 #include <irc/command.hpp>
 #include <irc/ctcp/command.hpp>
-#include <irc/ctcp/dcc/command.hpp>
+#include <irc/dcc/command.hpp>
+#include <irc/dcc/request.hpp>
 
 #include <boost/asio.hpp>
 
@@ -57,12 +58,37 @@ void on_chan_mode( const irc::message &msg )
     std::cout << msg.params[0] <<": "<< msg.prefix.nickname
               <<" has set mode "<< msg.params[1] <<" "<< msg.params[2] <<'\n';
 }
-void on_dcc_req(const std::string &address, const std::string &port,
-                irc::ctcp::dcc::command type, const std::string &argument, long size )
+void on_dcc_req( const irc::prefix &pfx, const irc::dcc::request &req )
 {
-    boost::asio::io_service ios;
-    ctcp::dcc::session::ptr dcc_ = ctcp::dcc::session::make_shared( ios );
-    dcc_->connect( address, port, type, argument, size );
+    std::string sType;
+    if( req.type == irc::dcc::command::chat )
+        sType = "CHAT";
+    else if( req.type == irc::dcc::command::send )
+        sType = "SEND";
+    else
+        return;
+
+    std::cout <<"DCC "<< sType <<
+                " request from "<< req.address <<
+                " port: "       << req.port <<
+                " argument: "   << req.argument <<
+                " with size: "  << req.size <<'\n';
+}
+void on_dcc_msg( const irc::prefix &pfx, const std::string &msg )
+{
+    std::cout <<"DCC <"<< pfx.nickname << "> "<< msg << '\n';
+}
+void on_dcc_send( const irc::prefix &pfx, size_t filesize )
+{
+    ;
+}
+void on_dcc_connected()
+{
+    std::cout <<"DCC connected."<< '\n';
+}
+void on_dcc_disconnected()
+{
+    std::cout <<"DCC disconnected."<< '\n';
 }
 void on_user_mode( const irc::message &msg )
 {

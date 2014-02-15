@@ -9,10 +9,12 @@
 #ifndef IRC_CLIENT_HPP
 #define IRC_CLIENT_HPP
 
+#include "irc/types.hpp"
 #include "irc/command.hpp"
 #include "irc/error.hpp"
 #include "irc/message.hpp"
-#include "irc/types.hpp"
+
+#include <boost/asio.hpp>
 
 #include <memory>
 
@@ -49,7 +51,13 @@ public:
     @param io_service Reference to the ASIO io_service controller.
     @return Shared pointer to a new client object.
 */
-    static ptr create( asio::io_service &io_service );
+    static ptr create( boost::asio::io_service &io_service,
+                        const std::string &hostname,
+                        const std::string &port     = "6667",
+                        const std::string &nickname = "nobody",
+                        const std::string &username = "nobody",
+                        const std::string &realname = "noname",
+                        const std::string &srv_pwrd = std::string{});
 
 /** Destructor. */
     ~client();
@@ -62,12 +70,7 @@ public:
     @param realname Real name for the client connection.
     @param srv_pwrd Password to login to a server that requires a key.
 */
-    void connect( const std::string &hostname,
-                  const std::string &port     = "6667",
-                  const std::string &nickname = "nobody",
-                  const std::string &username = "nobody",
-                  const std::string &realname = "noname",
-                  const std::string &srv_pwrd = std::string() );
+    void connect();
 /**
     Returns the connection state. 
     @return @true if connected, @false otherwise.
@@ -77,6 +80,10 @@ public:
     Disconnects the active connection with the irc server.
 */
     void disconnect();
+/**
+    @return Public address as string.
+*/
+    std::string address() const;
 /**
     Sends a raw command to the server.
     @param command The command string to send.
@@ -90,6 +97,20 @@ public:
 */
     void action( const std::string &destination, const std::string &message );
 /**
+    Offer a DCC chat request.
+    @param nickname The recipient where to send the DCC request/accept.
+    @param port     The DCC port.
+*/
+    void dcc_chat( const std::string &nickname, const std::string &port );
+/**
+    Offer a DCC file send request.
+    @param nickname The recipient where to send the DCC request/accept.
+    @param port     The DCC port.
+    @param filename The name of the file to send.
+*/
+    void dcc_send( const std::string &nickname, const std::string &port,
+                   const std::string &filename );
+/**
     Sends a CTCP request.
     @param nickname The target nickname to send the request to.
     @param request  The CTCP request string.
@@ -101,14 +122,6 @@ public:
     @param reply    The CTCP reply string.
 */
     void ctcp_reply( const std::string &nickname, const std::string &reply );
-
-    void dcc_chat( const std::string &nickname );
-/**
-    Sends a DCC request.
-    @param nickname The target nickname to send the request to.
-    @param request  The DCC request string.
-*/
-    void dcc_request( const std::string &nickname, const std::string &request );
 /**
     Sends an invitation to some user to join a channel.
     @param nickname The user to invite.
@@ -354,10 +367,22 @@ public:
     { return m_on_ctcp_rep.connect( std::forward<Callback>(func) ); }
 
 private:
-    explicit client( asio::io_service &io_service )
-    :   m_io_service(io_service),
+    explicit client(boost::asio::io_service &io_service,
+                    const std::string &hostname,
+                    const std::string &port,
+                    const std::string &nickname,
+                    const std::string &username,
+                    const std::string &realname,
+                    const std::string &srv_pwrd)
+    :   m_ios(io_service),
         m_socket(io_service),
         m_connected(false),
+        m_address(hostname),
+        m_port(port),
+        m_nickname(nickname),
+        m_username(username),
+        m_realname(realname),
+        m_srv_pwrd(srv_pwrd),
         m_lasterror(error_code::success)
     {
         m_buf_read.prepare(512);
@@ -366,21 +391,27 @@ private:
 
     client() = delete;
 
-    void loop( const sys::error_code &ec, size_t bytes );
+    void loop( const boost::system::error_code &ec = boost::system::error_code(),
+                size_t bytes = 0 );
     bool parse( const std::string &raw_msg, message &msg );
 
-    void handle_message( message &msg );
-    void handle_read( const sys::error_code &ec, size_t bytes );
+    void handle_message( message &msg, size_t bytes );
+    void handle_read( const boost::system::error_code &ec, size_t bytes );
 
-    asio::io_service &m_io_service;
-    ip::tcp::socket m_socket;
-    asio::streambuf m_buf_read,
-                    m_buf_write;
+    dcc::request dcc_request( const std::string &request_string );
+
+    boost::asio::io_service     &m_ios;
+    boost::asio::ip::tcp::socket m_socket;
+    boost::asio::streambuf       m_buf_read,
+                                 m_buf_write;
 
     bool        m_connected;
-    std::string m_nickname,
+    std::string m_address,
+                m_port,
+                m_nickname,
                 m_username,
-                m_realname;
+                m_realname,
+                m_srv_pwrd;
     error_code  m_lasterror;
 
     sig_message m_on_chanmsg,

@@ -19,16 +19,12 @@
 
 #include <functional>
 
-namespace fsn = boost::fusion;
-namespace ph  = std::placeholders;
-namespace qi  = boost::spirit::qi;
 namespace irc {
 
-using msg_parser_type   = message_parser<std::string::const_iterator>;
-using ctcp_message_type = fsn::vector<ctcp::command, std::string>;
-
-void client::loop( const sys::error_code &ec, size_t bytes )
+void client::loop( const boost::system::error_code &ec, size_t bytes )
 {
+    namespace ph = std::placeholders;
+
     if( !ec ) BOOST_ASIO_CORO_REENTER( this )
     {
         for( ;; )
@@ -60,7 +56,7 @@ void client::loop( const sys::error_code &ec, size_t bytes )
             }
             BOOST_ASIO_CORO_YIELD
             {
-                m_io_service.post( std::bind( &client::handle_read,
+                m_ios.post( std::bind( &client::handle_read,
                                                 shared_from_this(), ec, bytes ) );
             }
         }
@@ -71,8 +67,12 @@ void client::loop( const sys::error_code &ec, size_t bytes )
     }
 }
 
-void client::handle_message( message &msg )
+void client::handle_message( message &msg, size_t bytes )
 {
+    namespace dcc = dcc;
+    namespace qi  = boost::spirit::qi;
+    namespace fsn = boost::fusion;
+
     if( (msg.params.size() > 1) &&
         (msg.command == command::privmsg ||
          msg.command == command::notice) )
@@ -93,7 +93,13 @@ void client::handle_message( message &msg )
             std::string ctcp_args = fsn::at_c<1>(ctcp_msg);
             if( ctcp_cmd == ctcp::command::dcc )
             {
-                dcc_request( msg.prefix.nickname, ctcp_args );
+                dcc::request req = dcc_request( ctcp_args );
+                if( req.type != dcc::command::none )
+                    m_on_dcc_req( msg.prefix, req );
+#ifdef IRC_DEBUG
+                else
+                    std::cerr << "Invalid DCC request: "<< ctcp_args << '\n';
+#endif
             }
             else if( msg.command == command::privmsg ) // request
             {
@@ -172,38 +178,38 @@ void client::handle_message( message &msg )
     }
 }
 
-void client::handle_read( const sys::error_code &ec, size_t bytes )
+void client::handle_read( const boost::system::error_code &ec, size_t bytes )
 {
-    if( ec )
-        return;
-
-    std::istream in( &m_buf_read );
-    std::string  raw_msg;
-    std::getline( in, raw_msg );
-
-    if( !raw_msg.empty() )
+    if( !ec )
     {
-        irc::message msg;
-        if( parse( raw_msg, msg ) )
+        std::istream in( &m_buf_read );
+        std::string  raw_msg;
+        std::getline( in, raw_msg );
+
+        if( !raw_msg.empty() )
         {
-            m_io_service.dispatch( std::bind( &client::handle_message,
-                                                shared_from_this(), msg ) );
+            irc::message msg;
+            if( parse( raw_msg, msg ) )
+            {
+                m_ios.post( std::bind( &client::handle_message,
+                                        shared_from_this(), msg, bytes ) );
+            }
         }
     }
-
-    m_io_service.post( std::bind( &client::loop, shared_from_this(),
-                                    sys::error_code(), 0 ) );
+    m_ios.post( std::bind( &client::loop, shared_from_this(), ec, bytes ) );
 }
 
 bool client::parse( const std::string &raw_msg, message &msg )
 {
+    namespace qi = boost::spirit::qi;
+
     if( raw_msg.empty() )
         return false;
 
     std::string::const_iterator first = raw_msg.begin();
     std::string::const_iterator last  = raw_msg.end();
-    msg_parser_type             msg_parser;
-    qi::space_type              space;
+    message_parser<std::string::const_iterator> msg_parser;
+    qi::space_type space;
 
     bool r = qi::phrase_parse( first, last, msg_parser, space, msg );
 

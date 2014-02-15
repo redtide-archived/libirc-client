@@ -9,25 +9,24 @@
 #ifndef IRC_CLIENT_TYPES_HPP
 #define IRC_CLIENT_TYPES_HPP
 
-#include "irc/ctcp/command.hpp"
-#include "irc/ctcp/dcc/session.hpp"
 #include "irc/message.hpp"
+#include "irc/ctcp/command.hpp"
+#include "irc/dcc/request.hpp"
 
-#include <boost/asio.hpp>
 #include <boost/signals2/signal.hpp>
-#include <boost/system/error_code.hpp>
 
-namespace signals = boost::signals2;
 namespace irc {
 
-using sig_message= signals::signal<void(const message&)>;
-using sig_void   = signals::signal<void()>;
-using sig_ctcp   = signals::signal<void(const message&,
-                                        ctcp::command,
+namespace signals = boost::signals2;
+
+using sig_message = signals::signal<void(const message&)>;
+using sig_void    = signals::signal<void()>;
+using sig_ctcp    = signals::signal<void(const message&,
+                                        irc::ctcp::command,
                                         const std::string&)>;
-using sig_dcc_req= signals::signal<void(const std::string&, const std::string&,
-                                        ctcp::dcc::command, const std::string&,
-                                        long)>;
+using sig_dcc_req = signals::signal<void(const irc::prefix&, const irc::dcc::request&)>;
+using sig_dcc_msg = signals::signal<void(const irc::prefix&, const std::string&)>;
+using sig_dcc_send= signals::signal<void(const irc::prefix&, size_t)>;
 
 } // namespace irc
 

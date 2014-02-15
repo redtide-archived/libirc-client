@@ -1,16 +1,15 @@
 /*
-    Name:        irc/ctcp/dcc/command.hpp
+    Name:        irc/dcc/command.hpp
     Purpose:     DCC commands.
     Author:      Andrea Zanellato
     Modified by: 
     Created:     2014/02/03
     Licence:     Boost Software License, Version 1.0
 */
-#ifndef IRC_CTCP_DCC_COMMAND_HPP
-#define IRC_CTCP_DCC_COMMAND_HPP
+#ifndef IRC_DCC_COMMAND_HPP
+#define IRC_DCC_COMMAND_HPP
 
 namespace irc  {
-namespace ctcp {
 /**
     DCC namespace.
     DCC stands for something like "Direct Client Connection".
@@ -24,15 +23,12 @@ namespace dcc  {
 /** DCC commands. */
 enum class command
 {
-/** To carry a secure conversation. */
-    chat,
-
-/** To send a file to the recipient. */
-    send
+    none, /**< Invalid request command. */
+    chat, /**< To carry a secure conversation. */
+    send  /**< To send a file to the recipient. */
 };
 
 } // namespace dcc
-} // namespace ctcp
 } // namespace irc
 
-#endif // IRC_CTCP_DCC_COMMAND_HPP
+#endif // IRC_DCC_COMMAND_HPP

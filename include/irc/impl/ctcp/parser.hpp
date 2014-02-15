@@ -20,9 +20,11 @@
 
 #include <string>
 
-namespace fsn = boost::fusion;
-namespace irc {
+namespace irc  {
 namespace ctcp {
+
+namespace fsn = boost::fusion;
+namespace qi  = boost::spirit::qi;
 
 template<typename Iterator>
 struct parser : qi::grammar<Iterator,
