@@ -21,7 +21,6 @@ namespace dcc  {
 
 class file_client : public std::enable_shared_from_this< file_client >,
                     public irc::dcc::client,
-                    public boost::asio::coroutine,
                     boost::noncopyable
 {
 public:
@@ -40,6 +39,14 @@ public:
     sys::error_code ec;
     fs::path fpath( fullpath );
 
+    if( fs::exists( fpath )
+        return file_client::ptr(nullptr);
+
+    file_client::ptr new_session(
+        new file_client(ios, details, address, port, fpath));
+
+    return new_session;
+/*
     if( fs::is_regular_file(fs::status(fpath, ec)) )
     {
         file_client::ptr new_session
@@ -48,7 +55,8 @@ public:
         );
         return new_session;
     }
-    return session::ptr(nullptr);
+    return file_client::ptr(nullptr);
+*/
 }
 /**
     Signal fired when sending a file using DCC.
@@ -72,6 +80,8 @@ private:
         m_buf_write.prepare(512);
     }
 
+    void handle_read( const boost::system::error_code &ec );
+
     boost::filesystem::path m_filepath;
     sig_dcc_send            m_on_dcc_send;
 };
@@ -81,7 +91,6 @@ private:
 
 #ifdef IRC_CLIENT_HEADER_ONLY
     #include "irc/impl/dcc/file_client.ipp"
-    #include "irc/impl/dcc/loop.ipp"
 #endif
 
 #endif // IRC_DCC_FILE_CLIENT_HPP

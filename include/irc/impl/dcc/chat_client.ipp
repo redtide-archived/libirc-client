@@ -47,11 +47,9 @@ void chat_client::do_write()
 
 void chat_client::do_read()
 {
-    boost::asio::async_read
+    boost::asio::async_read_until
     (
-        m_socket,
-        m_buf_read,
-//      boost::asio::transfer_all(),
+        m_socket, m_buf_read, '\n',
         std::bind( &chat_client::handle_read, shared_from_this(), 
                     std::placeholders::_1 )
     );
@@ -59,21 +57,20 @@ void chat_client::do_read()
 
 void chat_client::handle_read( const boost::system::error_code &ec )
 {
-    if( !ec && m_buf_read.size() > 0 )
+    if( !ec )
     {
-        std::istream in( &m_buf_read );
-        std::string  raw_msg;
-        std::getline( in, raw_msg );
+        if( m_buf_read.size() > 0 )
+        {
+            std::istream in( &m_buf_read );
+            std::string  raw_msg;
+            std::getline( in, raw_msg );
 
-//      if( raw_msg[raw_msg.size() - 1] == '\n' )
-//          raw_msg.erase( raw_msg.size() - 1 );
+            if( raw_msg[raw_msg.size() - 1] == '\r' )
+                raw_msg.erase( raw_msg.size() - 1 );
 
-        if( raw_msg[raw_msg.size() - 1] == '\r' )
-            raw_msg.erase( raw_msg.size() - 1 );
-
-        m_on_dcc_msg( m_prefix, raw_msg );
-//      m_buf_read.consume( m_buf_read.size() );
-
+            m_on_dcc_msg( m_prefix, raw_msg );
+    //      m_buf_read.consume( m_buf_read.size() );
+        }
         m_ios.post( std::bind( &chat_client::do_read, shared_from_this() ) );
     }
     else

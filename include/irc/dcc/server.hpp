@@ -35,7 +35,7 @@ private:
         namespace ip   = asio::ip;
         namespace ph   = std::placeholders;
 
-        ip::tcp::endpoint ep( ip::tcp::v6(), 0 );
+        ip::tcp::endpoint ep( ip::tcp::v4(), 0 ); // TODO: v6() ?
         m_acceptor.open(ep.protocol());
         m_acceptor.set_option(ip::tcp::acceptor::reuse_address(true));
         m_acceptor.bind(ep);

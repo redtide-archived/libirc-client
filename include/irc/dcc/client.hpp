@@ -55,6 +55,6 @@ private:
 };
 
 } // namespace dcc
-} // 
+} // namespace irc
 
 #endif // IRC_DCC_CLIENT_HPP
